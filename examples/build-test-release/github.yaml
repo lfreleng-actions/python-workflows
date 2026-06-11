@@ -20,7 +20,6 @@ name: 'Python Build/Test/Release'
 
 # yamllint disable-line rule:truthy
 on:
-  workflow_dispatch:
   push:
     tags:
       - '**'

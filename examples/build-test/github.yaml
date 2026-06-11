@@ -27,7 +27,6 @@ on:
       - '**'
       - '!.github/**'
       - '!.*'
-      - '!tox.ini'
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"

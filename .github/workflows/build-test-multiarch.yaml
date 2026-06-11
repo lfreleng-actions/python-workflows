@@ -5,8 +5,10 @@
 # Reusable Python build/test pipeline (multiple architectures).
 #
 # Reproduces the canonical Linux Foundation Python pipeline, fanned out
-# across an architecture matrix (x64 + arm64 by default):
-#   repository-metadata -> python-metadata -> python-build (matrixed) ->
+# across an architecture matrix (x64 + arm64 by default). The
+# repository-metadata job runs in parallel as an informational step; the
+# build chain is:
+#   python-metadata -> python-build (matrixed) ->
 #   {tests, audit, sbom + grype} (matrixed)
 #
 # Each matrixed job runs on a 2-D matrix of architecture (from the

@@ -24,7 +24,6 @@ name: 'Python Build/Test/Release (Multi-Arch)'
 
 # yamllint disable-line rule:truthy
 on:
-  workflow_dispatch:
   push:
     tags:
       - '**'

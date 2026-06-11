@@ -5,11 +5,12 @@
 # Reusable Python build/test/release pipeline (multiple architectures).
 #
 # Reproduces the canonical Linux Foundation Python release pipeline,
-# fanned out across an architecture matrix (x64 + arm64 by default):
-#   repository-metadata / tag-validate -> python-metadata ->
-#   python-build (matrixed) -> {tests, audit} (matrixed) ->
-#   sbom + grype (per-arch) -> test-pypi -> pypi ->
-#   attach-artefacts -> promote-release
+# fanned out across an architecture matrix (x64 + arm64 by default). The
+# repository-metadata job runs in parallel as an informational step; the
+# release chain is:
+#   tag-validate -> python-metadata -> python-build (matrixed) ->
+#   {tests, audit} (matrixed) -> sbom + grype (per-arch) ->
+#   test-pypi -> pypi -> attach-artefacts -> promote-release
 #
 # Each matrixed build/test/audit job runs on a 2-D matrix of architecture
 # (from the `runners` input) crossed with Python version (discovered by
@@ -241,11 +242,6 @@ on:
         required: false
         type: string
         default: 'development'
-      tag:
-        description: 'Release tag (empty = derive from the pushed tag)'
-        required: false
-        type: string
-        default: ''
 
     secrets:
       pypi_credential:
