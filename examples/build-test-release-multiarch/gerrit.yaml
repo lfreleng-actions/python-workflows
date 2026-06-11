@@ -1,0 +1,166 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# =============================================================================
+# EXAMPLE: Gerrit-wrapped caller for the build-test-release-multiarch
+#          workflow
+# =============================================================================
+# Use this form when Gerrit is the source of truth (SCM) for your project.
+# This follows the Gerrit MERGE pattern: it runs AFTER a change has merged,
+# the Gerrit equivalent of a "push to main/tag" trigger. Because the change
+# is already merged you CANNOT vote on it, so the wrapper jobs run in
+# comment-only mode and post status comments back to the Gerrit change.
+#
+# DEPLOYMENT NOTES:
+#   * Copy into .github/workflows/ with a filename containing BOTH 'gerrit'
+#     AND 'merge' so gerrit_to_platform can discover it, e.g.
+#     gerrit-release-merge.yaml.
+#   * The nine GERRIT_* inputs are populated automatically by the dispatcher.
+#   * Release wrappers do NOT include GERRIT_DISABLED.
+#   * Set the repository variables GERRIT_SERVER, GERRIT_SSH_USER,
+#     GERRIT_KNOWN_HOSTS, GERRIT_URL and the secret GERRIT_SSH_PRIVKEY.
+#
+# RELEASE-ON-GERRIT NOTE:
+#   The reusable release workflow's tag-validate job expects a tag context.
+#   Triggering a release from Gerrit is project-specific (commonly via tag
+#   replication from Gerrit to the GitHub mirror). Tune this wrapper to your
+#   project's release-triggering mechanism as needed.
+# =============================================================================
+name: 'Gerrit Merge (Multi-Arch)'
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_dispatch:
+    inputs:
+      GERRIT_BRANCH:
+        description: 'Branch that change is against'
+        required: true
+        type: string
+      GERRIT_CHANGE_ID:
+        description: 'The ID for the change'
+        required: true
+        type: string
+      GERRIT_CHANGE_NUMBER:
+        description: 'The Gerrit number'
+        required: true
+        type: string
+      GERRIT_CHANGE_URL:
+        description: 'URL to the change'
+        required: true
+        type: string
+      GERRIT_EVENT_TYPE:
+        description: 'Type of Gerrit event'
+        required: true
+        type: string
+      GERRIT_PATCHSET_NUMBER:
+        description: 'The patch number for the change'
+        required: true
+        type: string
+      GERRIT_PATCHSET_REVISION:
+        description: 'The revision sha'
+        required: true
+        type: string
+      GERRIT_PROJECT:
+        description: 'Project in Gerrit'
+        required: true
+        type: string
+      GERRIT_REFSPEC:
+        description: 'Gerrit refspec of change'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.event.inputs.GERRIT_CHANGE_ID || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  # Post a comment on the merged Gerrit change that the release job has
+  # started. comment-only: the change is merged, so we CANNOT cast votes.
+  notify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: 'Harden runner'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+      - name: 'Notify job start'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/gerrit-review-action@b26a98041c59f9a877048c320313ab13bcc19aae  # v1.0.1
+        with:
+          host: ${{ vars.GERRIT_SERVER }}
+          username: ${{ vars.GERRIT_SSH_USER }}
+          key: ${{ secrets.GERRIT_SSH_PRIVKEY }}
+          known_hosts: ${{ vars.GERRIT_KNOWN_HOSTS }}
+          gerrit-change-number: ${{ inputs.GERRIT_CHANGE_NUMBER }}
+          gerrit-patchset-number: ${{ inputs.GERRIT_PATCHSET_NUMBER }}
+          vote-type: clear
+          comment-only: "true"
+      - name: 'Allow replication'
+        run: sleep 10s
+
+  # Call the reusable build-test-release-multiarch workflow. The change is
+  # already merged, so it lives on the branch HEAD: pass ref (the Gerrit
+  # branch) and DO NOT set gerrit_refspec, which yields a standard checkout
+  # in the reusable workflow (NOT checkout-gerrit-change-action).
+  release:
+    needs: notify
+    if: needs.notify.result == 'success'
+    permissions:
+      contents: write       # Create the GitHub release / attach assets
+      id-token: write       # OIDC for PyPI trusted publishing
+      attestations: write   # Build provenance attestations
+    # REPLACE the pinned SHA below with a python-workflows release SHA.
+    # The all-zero SHA is a non-functional placeholder, NOT a real commit.
+    # yamllint disable-line rule:line-length
+    uses: lfreleng-actions/python-workflows/.github/workflows/build-test-release-multiarch.yaml@0000000000000000000000000000000000000000  # REPLACE: vX.Y.Z
+    with:
+      # A merged change is on the branch HEAD, not an unmerged Gerrit ref,
+      # so we use a standard checkout of the branch (no gerrit_refspec).
+      ref: ${{ inputs.GERRIT_BRANCH }}
+      #
+      # Multi-arch inputs may be passed here alongside ref, for example:
+      #   setup_script: '.github/scripts/setup-nss.sh'
+      #   make: true
+      #   ld_library_path: '/usr/local/lib'
+    # The two publishing credentials are REQUIRED by the reusable workflow.
+    secrets:
+      pypi_credential: ${{ secrets.PYPI_CREDENTIAL }}
+      test_pypi_credential: ${{ secrets.TEST_PYPI_CREDENTIAL }}
+
+  # Report the final outcome back to the merged Gerrit change as a comment.
+  # comment-only again: no voting on a merged change.
+  report-status:
+    if: ${{ always() }}
+    needs: [notify, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: 'Harden runner'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+      - name: 'Get conclusion'
+        # yamllint disable-line rule:line-length
+        uses: im-open/workflow-conclusion@fce18569e28a9f2ed1feca1e6d4251e6a7365fdc  # v2.2.4
+      - name: 'Report workflow conclusion'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/gerrit-review-action@b26a98041c59f9a877048c320313ab13bcc19aae  # v1.0.1
+        with:
+          host: ${{ vars.GERRIT_SERVER }}
+          username: ${{ vars.GERRIT_SSH_USER }}
+          key: ${{ secrets.GERRIT_SSH_PRIVKEY }}
+          known_hosts: ${{ vars.GERRIT_KNOWN_HOSTS }}
+          gerrit-change-number: ${{ inputs.GERRIT_CHANGE_NUMBER }}
+          gerrit-patchset-number: ${{ inputs.GERRIT_PATCHSET_NUMBER }}
+          vote-type: ${{ env.WORKFLOW_CONCLUSION }}
+          comment-only: "true"
