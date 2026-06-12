@@ -58,9 +58,9 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/build-test-multiarch.yaml
     with:
-      # Testing: temporarily use main until updates made in upstream repo
+      # Testing: fork PR branch carrying setup-nss.sh, pending nss-ng#156
       repository: modeseven-lfreleng-actions/python-nss-ng
-      ref: main
+      ref: feat/adopt-reusable-workflows
       make: true
       make_args: 'deps-nss env-github-actions'
       setup_script: '.github/scripts/setup-nss.sh'
