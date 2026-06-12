@@ -22,7 +22,7 @@ on:
         description: 'Repository to check out (owner/name)'
         required: false
         type: string
-        default: ${{ github.repository }}
+        default: ''
       ref:
         description: 'Branch/tag/SHA to check out (empty = default branch)'
         required: false
@@ -213,7 +213,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
 
@@ -278,7 +278,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Build Python project'
@@ -340,7 +340,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Python tests [pytest] ${{ matrix.python-version }}'
@@ -405,7 +405,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Audit dependencies ${{ matrix.python-version }}'
@@ -465,7 +465,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Generate SBOM'

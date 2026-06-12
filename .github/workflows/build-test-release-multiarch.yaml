@@ -36,7 +36,7 @@ on:
         description: 'Repository to check out (owner/name)'
         required: false
         type: string
-        default: ${{ github.repository }}
+        default: ''
       ref:
         description: 'Branch/tag/SHA to check out (empty = default branch)'
         required: false
@@ -299,7 +299,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
 
@@ -360,7 +360,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           fetch-tags: true
@@ -450,7 +450,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Extract Python project metadata'
@@ -537,7 +537,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Validate setup script path'
@@ -631,7 +631,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Validate setup script path'
@@ -724,7 +724,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Validate setup script path'
@@ -758,7 +758,7 @@ jobs:
           ignore_vulns: ${{ inputs.audit_ignore_vulns }}
           config: ${{ inputs.audit_allow_list_config }}
           # yamllint disable-line rule:line-length
-          artefact_name: audit-${{ matrix.target.arch }}-py${{ matrix.python-version }}
+          artefact_name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
   sbom:
@@ -811,7 +811,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Validate setup script path'
@@ -1111,7 +1111,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: '⬇ Download build artefacts'
@@ -1179,7 +1179,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: ${{ inputs.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
 
       - name: 'Check if release is already promoted'
