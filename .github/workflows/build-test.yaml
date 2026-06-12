@@ -288,7 +288,7 @@ jobs:
         with:
           path_prefix: ${{ inputs.path_prefix }}
           python_version: ${{ inputs.python_version }}
-          build_formats: ${{ inputs.build_formats }}
+          build_formats: ${{ inputs.build_formats || 'both' }}
           tox_build: ${{ inputs.tox_build }}
 
   python-tests:

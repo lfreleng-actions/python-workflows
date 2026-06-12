@@ -570,7 +570,7 @@ jobs:
           artefact_name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
           path_prefix: ${{ inputs.path_prefix }}
           python_version: ${{ matrix.python-version }}
-          build_formats: ${{ inputs.build_formats }}
+          build_formats: ${{ inputs.build_formats || 'both' }}
           tox_build: ${{ inputs.tox_build }}
           auditwheel: ${{ inputs.auditwheel }}
           manylinux_version: ${{ inputs.manylinux_version }}
