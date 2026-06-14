@@ -14,9 +14,9 @@
 #
 # Each matrixed build/test/audit job runs on a 2-D matrix of architecture
 # (from the `runners` input) crossed with Python version (discovered by
-# the python-metadata job, or overridden via `python_versions`). The
-# SBOM + Grype job runs per-arch only, because native dependency trees
-# differ per architecture but not per Python version.
+# the python-metadata job). The SBOM + Grype job runs per-arch only,
+# because native dependency trees differ per architecture but not per
+# Python version.
 #
 # Native pre-build steps (system packages, C builds) are supplied by the
 # consumer through the optional `setup_script` hook, which runs in every
@@ -49,18 +49,6 @@ on:
         required: false
         type: string
         default: '.'
-      python_version:
-        description: 'Single Python version override for the build step'
-        required: false
-        type: string
-        default: ''
-      python_versions:
-        description: >-
-          JSON array overriding the discovered test/audit matrix
-          (e.g. ["3.11","3.12"]). Empty = use build-metadata discovery.
-        required: false
-        type: string
-        default: ''
       build_formats:
         description: "Build formats: 'sdist', 'wheel', or 'both'"
         required: false
@@ -464,23 +452,18 @@ jobs:
           use_version_extract: true
           verbose: true
 
-      # Honour the python_versions override; otherwise extract the bare
-      # version list from the build-metadata matrix object so the matrixed
-      # jobs can cross it with the architecture dimension.
+      # Extract the bare version list from the build-metadata matrix
+      # object so the matrixed jobs can cross it with the architecture
+      # dimension.
       - name: 'Derive Python version matrix'
         id: versions
         shell: bash
         env:
-          PYTHON_VERSIONS: ${{ inputs.python_versions }}
           MATRIX_JSON: ${{ steps.metadata.outputs.python_matrix_json }}
         run: |
           # Derive the bare JSON array of Python versions
-          if [ -n "${PYTHON_VERSIONS}" ]; then
-            versions="${PYTHON_VERSIONS}"
-          else
-            versions=$(printf '%s' "${MATRIX_JSON}" | \
-              jq -c '."python-version"')
-          fi
+          versions=$(printf '%s' "${MATRIX_JSON}" | \
+            jq -c '."python-version"')
           echo "Python versions: ${versions}"
           echo "versions_json=${versions}" >> "$GITHUB_OUTPUT"
 

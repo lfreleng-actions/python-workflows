@@ -52,7 +52,6 @@ jobs:
     # needs; everything else falls back to sensible defaults.
     # with:
     #   path_prefix: '.'              # project root (monorepo subdir, etc.)
-    #   python_versions: '["3.11","3.12"]'  # override discovered matrix
     #   build_formats: 'both'         # 'sdist', 'wheel', or 'both'
     #   tox_build: false              # build via tox
     #   tox_tests: false              # run tests via tox

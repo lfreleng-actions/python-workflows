@@ -112,8 +112,6 @@ defaults each target to the consumer's default/HEAD branch.
 | `repository` | checkout | `''` (use-site `github.repository` fallback) |
 | `ref` | checkout | `''` |
 | `path_prefix` | build/test/audit/sbom/metadata | `.` |
-| `python_version` | build (single-version override) | `''` |
-| `python_versions` | matrix override (JSON) | `''` (use build-metadata discovery) |
 | `build_formats` | build | `''` |
 | `tox_build` | build | `false` |
 | `tox_tests` | test | `false` |
@@ -134,8 +132,9 @@ defaults each target to the consumer's default/HEAD branch.
 
 **`build-test-release.yaml`:** all of the above plus `attestations`
 (`true`), `sigstore_sign` (`true`), `pypi_environment` (`production`),
-`test_pypi_environment` (`development`), `tag` (`''`). Release workflows
-do **not** carry `GERRIT_DISABLED` semantics.
+and `test_pypi_environment` (`development`). The release tag is taken
+from the pushed tag (validated by `tag-validate`), not a workflow
+input. Release workflows do **not** carry `GERRIT_DISABLED` semantics.
 
 **`build-test-multiarch.yaml`:** standard set plus `runners` (JSON),
 `auditwheel` (`true`), `manylinux_version` (`manylinux_2_38`), `make`
@@ -149,8 +148,12 @@ demand): `validate_output`, `strict_validation`, `export_env_vars`,
 `skip_version_patch`, `editable`, `summary`, and the granular
 `allow_list_path/url/org/disable` (superseded by the single `config`).
 
-Rulings: `permit_fail` split into `test_permit_fail` / `audit_permit_fail`;
-`python_versions` override added (defaulting to build-metadata discovery).
+Rulings: `permit_fail` split into `test_permit_fail` /
+`audit_permit_fail`. The Python build interpreter and the test/audit
+matrix are derived entirely from project metadata
+(build-metadata-action); no `python_version` / `python_versions`
+override inputs are exposed, keeping project metadata the single
+source of truth.
 
 ### Q5 — Native-setup script hook (multi-arch only)
 

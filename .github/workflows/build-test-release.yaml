@@ -37,18 +37,6 @@ on:
         required: false
         type: string
         default: '.'
-      python_version:
-        description: 'Single Python version override for the build step'
-        required: false
-        type: string
-        default: ''
-      python_versions:
-        description: >-
-          JSON array overriding the discovered test/audit matrix
-          (e.g. ["3.11","3.12"]). Empty = use build-metadata discovery.
-        required: false
-        type: string
-        default: ''
       build_formats:
         description: "Build formats: 'sdist', 'wheel', or 'both'"
         required: false
@@ -353,9 +341,7 @@ jobs:
     needs: 'tag-validate'
     runs-on: 'ubuntu-latest'
     outputs:
-      # Honour the python_versions override; otherwise use discovered matrix.
-      # yamllint disable-line rule:line-length
-      matrix_json: ${{ inputs.python_versions != '' && format('{{"python-version":{0}}}', inputs.python_versions) || steps.python-build.outputs.matrix_json }}
+      matrix_json: ${{ steps.python-build.outputs.matrix_json }}
       artefact_name: ${{ steps.python-build.outputs.artefact_name }}
       artefact_path: ${{ steps.python-build.outputs.artefact_path }}
     permissions:
@@ -412,7 +398,6 @@ jobs:
         uses: lfreleng-actions/python-build-action@5f570d5d17a7315074a824a91c6a705b6fc5c7dd  # v1.1.2
         with:
           path_prefix: ${{ inputs.path_prefix }}
-          python_version: ${{ inputs.python_version }}
           build_formats: ${{ inputs.build_formats || 'both' }}
           tox_build: ${{ inputs.tox_build }}
           sigstore_sign: ${{ inputs.sigstore_sign }}
