@@ -45,12 +45,9 @@ jobs:
 
   # Multi-arch C consumer (runs in parallel with the standard matrix).
   #
-  # python-nss-ng needs the committed native setup script
-  # (.github/scripts/setup-nss.sh) for the test/audit/sbom jobs to pass.
-  # That script (and the reusable-workflow migration) currently lives only
-  # on the fork, so this leg temporarily targets the fork. A later
-  # python-workflows PR repoints it at lfreleng-actions/python-nss-ng once
-  # the migration lands upstream.
+  # python-nss-ng provides the committed native setup script
+  # (.github/scripts/setup-nss.sh) consumed via the setup_script input.
+  # Pinned to the v1.2.0 release commit of the upstream repository.
   multiarch:
     name: 'Multi-Arch'
     permissions:
@@ -58,9 +55,8 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/build-test-multiarch.yaml
     with:
-      # Testing: fork PR branch carrying setup-nss.sh, pending nss-ng#156
-      repository: modeseven-lfreleng-actions/python-nss-ng
-      ref: feat/adopt-reusable-workflows
+      repository: lfreleng-actions/python-nss-ng
+      ref: e6e197516189faac861f191a6a48f0e1d993ef3d  # v1.2.0
       make: true
       make_args: 'deps-nss env-github-actions'
       setup_script: '.github/scripts/setup-nss.sh'
