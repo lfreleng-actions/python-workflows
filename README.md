@@ -28,10 +28,12 @@ every Python repository.
 
 <!-- markdownlint-enable MD013 -->
 
-Each pipeline reproduces the standard job graph:
+Each pipeline runs a `repository-metadata` job in parallel (an
+informational step that does not gate the build), alongside the build
+chain:
 
 ```text
-repository-metadata -> python-build -> {python-tests, python-audit, sbom} -> grype
+python-build -> {python-tests, python-audit, sbom} -> grype
 ```
 
 The release variants add `tag-validate`, `test-pypi`, `pypi`,

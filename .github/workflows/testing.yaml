@@ -10,8 +10,9 @@
 #   * python-nss-ng (multi-arch C build)   -> build-test-multiarch.yaml
 #
 # The reusable workflows are referenced by LOCAL path so this always
-# validates the current branch's workflows. Each target is checked out at
-# its default/HEAD branch.
+# validates the current branch's workflows. The standard targets are
+# checked out at their default/HEAD branch; the python-nss-ng leg is
+# pinned to the v1.2.0 release commit (see ref: below).
 name: 'Testing 🧪'
 
 # yamllint disable-line rule:truthy
