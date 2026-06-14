@@ -375,7 +375,6 @@ end-to-end against the latest fork push as the work iterates.
 - Swap the dependamerge (#2) and python-nss-ng (#3) consumer PRs from the
   fork branch ref to the pinned `lfreleng-actions/python-workflows@<release-sha>`,
   take them out of draft, and send for human review.
-- In a subsequent `python-workflows` PR, flip `testing.yaml`'s nss-ng leg
-  from `modeseven-lfreleng-actions/python-nss-ng@main` back to
-  `lfreleng-actions/python-nss-ng` once the nss-ng migration merges
-  upstream.
+- ✅ **Done** — `testing.yaml`'s nss-ng leg now targets
+  `lfreleng-actions/python-nss-ng`, pinned to the v1.2.0 release commit
+  (`e6e1975`), which ships `setup-nss.sh`.
