@@ -279,6 +279,10 @@ Reuse the exact existing pins:
 - Expose `grype_fail_on` (default `medium`) and `grype_permit_fail`
   (default `false`, falling back to `vars.NO_BLOCK_AUDIT_FAIL` at the
   use-site).
+- **`sbom_format` accepts `json` or `both`** (default `both`); the
+  embedded Grype audit requires a JSON SBOM, so xml-only output is
+  unsupported. An undocumented `xml` value is coerced to `both` at
+  the use-site.
 - **Context-driven `gerrit_summary`**: the `repository-metadata` job sets
   `gerrit_summary: ${{ inputs.gerrit_refspec != '' }}` so Gerrit runs get
   the Gerrit summary and GitHub runs do not.

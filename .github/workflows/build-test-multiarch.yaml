@@ -161,7 +161,7 @@ on:
         type: boolean
         default: false
       sbom_format:
-        description: "SBOM output format: 'json', 'xml', or 'both'"
+        description: "SBOM output format: 'json' or 'both'"
         required: false
         type: string
         default: 'both'
@@ -715,8 +715,10 @@ jobs:
         with:
           path_prefix: ${{ inputs.path_prefix }}
           include_dev: ${{ inputs.sbom_include_dev }}
-          # Always include JSON: the Grype audit below scans the JSON
-          # SBOM, so it must exist regardless of the caller's sbom_format.
+          # The Grype audit below scans the JSON SBOM, so JSON must
+          # always exist. sbom_format is documented as 'json' or
+          # 'both'; a stray, undocumented 'xml' is coerced to 'both'
+          # because workflow_call inputs cannot enforce an enum.
           # yamllint disable-line rule:line-length
           sbom_format: ${{ inputs.sbom_format == 'xml' && 'both' || inputs.sbom_format }}
 
