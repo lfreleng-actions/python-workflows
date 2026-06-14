@@ -96,7 +96,8 @@ reusable workflows can target them.
 
 **Decision: bake permanent optional inputs into all four workflows:**
 
-- `repository` (default `${{ github.repository }}`) → fed to checkout.
+- `repository` (static `default: ''`, with a `github.repository`
+  fallback applied at each checkout step) → fed to checkout.
 - `ref` (default `''`) → branch/tag/SHA to check out.
 
 These are useful beyond testing (e.g. orchestration). `testing.yaml`
@@ -108,7 +109,7 @@ defaults each target to the consumer's default/HEAD branch.
 
 | Input | Feeds | Default |
 | --- | --- | --- |
-| `repository` | checkout | `${{ github.repository }}` |
+| `repository` | checkout | `''` (use-site `github.repository` fallback) |
 | `ref` | checkout | `''` |
 | `path_prefix` | build/test/audit/sbom/metadata | `.` |
 | `python_version` | build (single-version override) | `''` |
