@@ -5,10 +5,12 @@
 # Reusable Python build/test/release pipeline (single architecture).
 #
 # Reproduces the canonical Linux Foundation Python release pipeline. The
-# repository-metadata job runs in parallel as an informational step; the
-# release chain is:
-#   tag-validate -> python-build -> {tests, audit, sbom -> grype} ->
-#   test-pypi -> pypi -> attach-artefacts -> promote-release
+# repository-metadata job runs in parallel as an informational step.
+# After python-build the jobs in { } run in parallel (none gates
+# another, so all failures surface); the publish chain then gates on
+# all of them:
+#   tag-validate -> python-build -> { tests | audit | sbom -> grype }
+#     -> test-pypi -> pypi -> attach-artefacts -> promote-release
 #
 # Call this from a thin caller workflow on a tag push; see
 # examples/build-test-release/ for both a plain GitHub-native caller and

@@ -29,17 +29,20 @@ every Python repository.
 <!-- markdownlint-enable MD013 -->
 
 Each pipeline runs a `repository-metadata` job in parallel (an
-informational step that does not gate the build), alongside the build
-chain:
+informational step that does not gate the build). After `python-build`,
+the test, audit and SBOM/Grype branches run in parallel - none gates
+another, so a pull request surfaces every failure at once (jobs in
+`{ }` run concurrently; `->` denotes sequence):
 
 ```text
-python-build -> {python-tests, python-audit, sbom} -> grype
+python-build -> { python-tests | python-audit | sbom -> grype }
 ```
 
-The release variants add `tag-validate`, `test-pypi`, `pypi`,
-`attach-artefacts` and `promote-release`. The multi-arch variants add a
-`python-metadata` job and fan the build / test / audit jobs out across an
-architecture matrix.
+The release variants wrap this with `tag-validate` up front and, after
+the parallel branches, a publishing chain that gates on them:
+`test-pypi -> pypi -> attach-artefacts -> promote-release`. The
+multi-arch variants add a `python-metadata` job and fan the build, test
+and audit jobs across an architecture matrix.
 
 ## Usage
 

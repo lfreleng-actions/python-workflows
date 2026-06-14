@@ -6,11 +6,13 @@
 #
 # Reproduces the canonical Linux Foundation Python release pipeline,
 # fanned out across an architecture matrix (x64 + arm64 by default). The
-# repository-metadata job runs in parallel as an informational step; the
-# release chain is:
+# repository-metadata job runs in parallel as an informational step.
+# After python-build the jobs in { } run in parallel (none gates
+# another, so all failures surface); the publish chain then gates on
+# all of them:
 #   tag-validate -> python-metadata -> python-build (matrixed) ->
-#   {tests, audit} (matrixed) -> sbom + grype (per-arch) ->
-#   test-pypi -> pypi -> attach-artefacts -> promote-release
+#   { tests | audit (matrixed) | sbom -> grype (per-arch) }
+#     -> test-pypi -> pypi -> attach-artefacts -> promote-release
 #
 # Each matrixed build/test/audit job runs on a 2-D matrix of architecture
 # (from the `runners` input) crossed with Python version (discovered by

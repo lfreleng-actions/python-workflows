@@ -277,11 +277,13 @@ Reuse the exact existing pins:
 
 **Decision:**
 
-- Reproduce the **full** dependamerge graph faithfully:
-  `python-build` → {`python-tests`, `python-audit`, `sbom`} → `grype`,
-  with `repository-metadata` running in parallel as an informational
-  job (no `needs`, so it does not gate the build). All jobs
-  **always-on** (no enable/disable toggles).
+- Reproduce the **full** dependamerge graph faithfully. After
+  `python-build`, three branches run in parallel - `python-tests`,
+  `python-audit`, and `sbom` → `grype` - none gating another, so a PR
+  run surfaces every failure. (In the release variants the publishing
+  chain then gates on all of them.) `repository-metadata` also runs in
+  parallel as an informational job (no `needs`, so it does not gate the
+  build). All jobs **always-on** (no enable/disable toggles).
 - Expose `grype_fail_on` (default `medium`) and `grype_permit_fail`
   (default `false`, falling back to `vars.NO_BLOCK_AUDIT_FAIL` at the
   use-site).

@@ -6,10 +6,11 @@
 #
 # Reproduces the canonical Linux Foundation Python pipeline, fanned out
 # across an architecture matrix (x64 + arm64 by default). The
-# repository-metadata job runs in parallel as an informational step; the
-# build chain is:
+# repository-metadata job runs in parallel as an informational step.
+# After python-build the jobs in { } run in parallel; none gates
+# another, so a PR surfaces every failure (-> denotes sequence):
 #   python-metadata -> python-build (matrixed) ->
-#   {tests, audit} (matrixed) -> sbom + grype (per-arch)
+#   { tests | audit (matrixed) | sbom -> grype (per-arch) }
 #
 # Each matrixed build/test/audit job runs on a 2-D matrix of
 # architecture (from the `runners` input) crossed with Python version

@@ -5,9 +5,10 @@
 # Reusable Python build/test pipeline (single architecture).
 #
 # Reproduces the canonical Linux Foundation Python pipeline. The
-# repository-metadata job runs in parallel as an informational step;
-# the build chain is:
-#   python-build -> {tests, audit, sbom} -> grype
+# repository-metadata job runs in parallel as an informational step.
+# After python-build the jobs in { } run in parallel; none gates
+# another, so a PR surfaces every failure (-> denotes sequence):
+#   python-build -> { tests | audit | sbom -> grype }
 #
 # Call this from a thin caller workflow; see examples/build-test/ for both
 # a plain GitHub-native caller and a Gerrit-wrapped caller.
