@@ -715,7 +715,10 @@ jobs:
         with:
           path_prefix: ${{ inputs.path_prefix }}
           include_dev: ${{ inputs.sbom_include_dev }}
-          sbom_format: ${{ inputs.sbom_format }}
+          # Always include JSON: the Grype audit below scans the JSON
+          # SBOM, so it must exist regardless of the caller's sbom_format.
+          # yamllint disable-line rule:line-length
+          sbom_format: ${{ inputs.sbom_format == 'xml' && 'both' || inputs.sbom_format }}
 
       - name: 'Upload SBOM artifacts'
         # yamllint disable-line rule:line-length
@@ -759,6 +762,23 @@ jobs:
           NO_BLOCK_AUDIT_FAIL: ${{ inputs.grype_permit_fail || vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
         shell: bash
         run: |
+          # The audit scans the JSON CycloneDX SBOM, which the sbom step
+          # always generates. Guard anyway so the step still emits a
+          # summary (and honours grype_permit_fail) if it is missing.
+          if [ ! -f sbom-cyclonedx.json ]; then
+            echo "::warning::No JSON SBOM found; Grype scan skipped"
+            {
+              echo "## Grype Vulnerability Scan"
+              echo ""
+              echo "No JSON SBOM available to scan."
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "${NO_BLOCK_AUDIT_FAIL}" = "true" ]; then
+              exit 0
+            fi
+            echo "::error::No JSON SBOM available for the Grype audit"
+            exit 1
+          fi
+
           # Run grype once, emitting all three output formats
           set +e
           "${GRYPE_CMD}" \
