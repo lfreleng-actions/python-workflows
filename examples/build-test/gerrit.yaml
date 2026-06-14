@@ -137,6 +137,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # workflow-conclusion queries the Actions API to list run jobs
+      actions: read
     timeout-minutes: 5
     steps:
       - name: 'Harden runner'

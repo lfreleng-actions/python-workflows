@@ -9,11 +9,14 @@
 # repository-metadata job runs in parallel as an informational step; the
 # build chain is:
 #   python-metadata -> python-build (matrixed) ->
-#   {tests, audit, sbom + grype} (matrixed)
+#   {tests, audit} (matrixed) -> sbom + grype (per-arch)
 #
-# Each matrixed job runs on a 2-D matrix of architecture (from the
-# `runners` input) crossed with Python version (discovered by the
-# python-metadata job, or overridden via `python_versions`).
+# Each matrixed build/test/audit job runs on a 2-D matrix of
+# architecture (from the `runners` input) crossed with Python version
+# (discovered by the python-metadata job, or overridden via
+# `python_versions`). The SBOM + Grype job runs per-arch only, because
+# native dependency trees differ per architecture but not per Python
+# version.
 #
 # Native pre-build steps (system packages, C builds) are supplied by the
 # consumer through the optional `setup_script` hook, which runs in every
