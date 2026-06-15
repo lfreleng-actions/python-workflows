@@ -157,6 +157,37 @@ on:
 permissions: {}
 
 jobs:
+  gerrit-validate:
+    name: 'Validate Gerrit Inputs'
+    # Runs in parallel (does not gate the build); fails fast with a
+    # clear message if gerrit_refspec is set without the project/branch
+    # that the Gerrit checkout path also requires.
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 2
+    steps:
+      - name: 'Require Gerrit project and branch'
+        if: inputs.gerrit_refspec != ''
+        shell: bash
+        env:
+          GERRIT_PROJECT: ${{ inputs.gerrit_project }}
+          GERRIT_BRANCH: ${{ inputs.gerrit_branch }}
+        run: |
+          # gerrit_refspec is set, so the Gerrit checkout path runs and
+          # also requires gerrit_project and gerrit_branch.
+          missing=''
+          if [ -z "${GERRIT_PROJECT}" ]; then
+            missing="${missing} gerrit_project"
+          fi
+          if [ -z "${GERRIT_BRANCH}" ]; then
+            missing="${missing} gerrit_branch"
+          fi
+          if [ -n "${missing}" ]; then
+            echo "::error::gerrit_refspec is set but missing:${missing}"
+            exit 1
+          fi
+          echo "Gerrit inputs validated ✅"
+
   repository-metadata:
     name: 'Repository Metadata'
     runs-on: ubuntu-latest

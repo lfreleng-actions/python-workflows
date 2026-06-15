@@ -318,8 +318,9 @@ Reuse the exact existing pins:
 - **Downstream gating differs by intent.** Because `python-build` is a
   matrix (arch × version), gating tests/audit on its aggregate result
   would skip the whole downstream matrix when any one cell fails. The
-  **PR** multi-arch workflow therefore gates `python-tests` /
-  `python-audit` on `python-metadata` (the matrix source) plus
+  **PR** multi-arch workflow therefore gates `python-tests`,
+  `python-audit` and `sbom`/`grype` on `python-metadata` (the matrix
+  source) plus
   `!cancelled()`, so a single failed build cell still lets every
   successfully-built cell run and the PR surfaces every failure. The
   **release** multi-arch workflow instead gates them strictly on
