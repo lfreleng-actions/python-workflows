@@ -286,7 +286,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
     timeout-minutes: 5
     steps:
       - name: 'Load egress allow-list (block mode)'
