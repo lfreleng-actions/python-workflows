@@ -193,6 +193,7 @@ jobs:
 
   repository-metadata:
     name: 'Repository Metadata'
+    needs: gerrit-validate
     runs-on: ubuntu-latest
     permissions:
       contents: read

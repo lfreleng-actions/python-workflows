@@ -285,8 +285,9 @@ Reuse the exact existing pins:
   `python-audit`, and `sbom` → `grype` - none gating another, so a PR
   run surfaces every failure. (In the release variants the publishing
   chain then gates on all of them.) `repository-metadata` also runs in
-  parallel as an informational job (no `needs`, so it does not gate the
-  build). All jobs **always-on** (no enable/disable toggles).
+  parallel as an informational job that does not gate the build chain
+  (it shares the `gerrit-validate` input gate but nothing depends on
+  it). All jobs **always-on** (no enable/disable toggles).
 - Expose `grype_fail_on` (default `medium`) and `grype_permit_fail`
   (default `false`, falling back to `vars.NO_BLOCK_AUDIT_FAIL` at the
   use-site).
