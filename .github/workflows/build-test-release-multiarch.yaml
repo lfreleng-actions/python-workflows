@@ -564,10 +564,14 @@ jobs:
           sigstore_sign: ${{ inputs.sigstore_sign }}
           attestations: ${{ inputs.attestations }}
 
+  # Release variant: gate downstream strictly on python-build success.
+  # A broken build means no release, so there is no value in running
+  # the test/audit matrix. (The non-release variant instead gates on
+  # python-metadata to surface every failure on a PR.)
   python-tests:
     name: 'Tests ${{ matrix.target.arch }} py${{ matrix.python-version }}'
     needs: ['python-metadata', 'python-build']
-    if: ${{ !cancelled() && needs.python-metadata.result == 'success' }}
+    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -660,7 +664,7 @@ jobs:
   python-audit:
     name: 'Audit ${{ matrix.target.arch }} py${{ matrix.python-version }}'
     needs: ['python-metadata', 'python-build']
-    if: ${{ !cancelled() && needs.python-metadata.result == 'success' }}
+    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:

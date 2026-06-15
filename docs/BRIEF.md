@@ -315,6 +315,17 @@ Reuse the exact existing pins:
 - **SBOM + Grype run per-arch** (native dependency trees differ per arch).
 - The structural asymmetry between standard (matrix from `python-build`
   output) and multi-arch (separate `python-metadata` job) is accepted.
+- **Downstream gating differs by intent.** Because `python-build` is a
+  matrix (arch × version), gating tests/audit on its aggregate result
+  would skip the whole downstream matrix when any one cell fails. The
+  **PR** multi-arch workflow therefore gates `python-tests` /
+  `python-audit` on `python-metadata` (the matrix source) plus
+  `!cancelled()`, so a single failed build cell still lets every
+  successfully-built cell run and the PR surfaces every failure. The
+  **release** multi-arch workflow instead gates them strictly on
+  `python-build` success: a broken build means no release, so there is
+  no value in running the downstream matrix. (`python-build` stays in
+  `needs` either way, for ordering.)
 
 ### Q13 — Repo conversion and `testing.yaml` targets
 

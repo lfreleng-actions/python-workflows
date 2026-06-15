@@ -438,6 +438,12 @@ jobs:
           make: ${{ inputs.make }}
           make_args: ${{ inputs.make_args }}
 
+  # PR variant: gate downstream on python-metadata (the matrix source),
+  # not on aggregate python-build success. python-build is a matrix
+  # (arch x version), so gating on it would skip the whole test/audit
+  # matrix whenever any one cell fails. Gating on python-metadata lets
+  # every successfully-built cell still run, so a PR surfaces every
+  # failure. (The release variant gates strictly on python-build.)
   python-tests:
     name: 'Tests ${{ matrix.target.arch }} py${{ matrix.python-version }}'
     needs: ['python-metadata', 'python-build']
