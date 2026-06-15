@@ -28,40 +28,49 @@ on:
     inputs:
       GERRIT_BRANCH:
         description: 'Branch that change is against'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_CHANGE_ID:
         description: 'The ID for the change'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_CHANGE_NUMBER:
         description: 'The Gerrit number'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_CHANGE_URL:
         description: 'URL to the change'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_EVENT_TYPE:
         description: 'Type of Gerrit event'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_PATCHSET_NUMBER:
         description: 'The patch number for the change'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_PATCHSET_REVISION:
         description: 'The revision sha'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_PROJECT:
         description: 'Project in Gerrit'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_REFSPEC:
         description: 'Gerrit refspec of change'
-        required: true
+        required: false
         type: string
+        default: ''
       GERRIT_DISABLED:
         description: 'Run without Gerrit components'
         required: false
