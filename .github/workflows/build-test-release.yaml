@@ -192,9 +192,12 @@ permissions: {}
 jobs:
   gerrit-validate:
     name: 'Validate Gerrit Inputs'
-    # Runs in parallel (does not gate the build); fails fast with a
-    # clear message if gerrit_refspec is set without the project/branch
-    # that the Gerrit checkout path also requires.
+    # Fails fast with a clear message when gerrit_refspec is set without
+    # the project/branch the Gerrit checkout path also requires. The
+    # build-chain root job depends on this, so invalid Gerrit inputs stop
+    # the pipeline early and cleanly. This job always runs (only the
+    # validation step is conditional), so gating dependents on it does
+    # not trip GitHub's "skipped need skips dependents" behaviour.
     runs-on: ubuntu-latest
     permissions: {}
     timeout-minutes: 2
@@ -283,6 +286,7 @@ jobs:
 
   tag-validate:
     name: 'Validate Tag Push'
+    needs: gerrit-validate
     runs-on: 'ubuntu-latest'
     permissions:
       contents: write  # Needed to draft a release
