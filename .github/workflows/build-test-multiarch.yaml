@@ -441,7 +441,7 @@ jobs:
   python-tests:
     name: 'Tests ${{ matrix.target.arch }} py${{ matrix.python-version }}'
     needs: ['python-metadata', 'python-build']
-    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
+    if: ${{ !cancelled() && needs.python-metadata.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -534,7 +534,7 @@ jobs:
   python-audit:
     name: 'Audit ${{ matrix.target.arch }} py${{ matrix.python-version }}'
     needs: ['python-metadata', 'python-build']
-    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
+    if: ${{ !cancelled() && needs.python-metadata.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
