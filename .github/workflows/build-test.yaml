@@ -169,21 +169,27 @@ jobs:
     permissions: {}
     timeout-minutes: 2
     steps:
-      - name: 'Require Gerrit project and branch'
+      - name: 'Require Gerrit project, branch and URL'
         if: inputs.gerrit_refspec != ''
         shell: bash
         env:
           GERRIT_PROJECT: ${{ inputs.gerrit_project }}
           GERRIT_BRANCH: ${{ inputs.gerrit_branch }}
+          # yamllint disable-line rule:line-length
+          GERRIT_URL: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
         run: |
           # gerrit_refspec is set, so the Gerrit checkout path runs and
-          # also requires gerrit_project and gerrit_branch.
+          # also requires gerrit_project, gerrit_branch and a resolvable
+          # Gerrit URL (the gerrit_url input or the GERRIT_URL variable).
           missing=''
           if [ -z "${GERRIT_PROJECT}" ]; then
             missing="${missing} gerrit_project"
           fi
           if [ -z "${GERRIT_BRANCH}" ]; then
             missing="${missing} gerrit_branch"
+          fi
+          if [ -z "${GERRIT_URL}" ]; then
+            missing="${missing} gerrit_url/GERRIT_URL"
           fi
           if [ -n "${missing}" ]; then
             echo "::error::gerrit_refspec is set but missing:${missing}"
