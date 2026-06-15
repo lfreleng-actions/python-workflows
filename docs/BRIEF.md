@@ -240,6 +240,9 @@ The nine standard Gerrit inputs on the wrappers:
 `block` runs `harden-runner-block-action` (out-of-band allow-list loader)
 plus harden-runner block mode (dependamerge/nss-ng pattern). `audit` skips
 the loader (lftools-uv pattern). Default is **block** (stronger posture).
+Audit mode is an explicit opt-in: the step conditionals test `== 'audit'`,
+so any other value (including a typo) falls back to block and the secure
+posture cannot be silently weakened.
 Reuse the exact existing pins:
 
 - `step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411` (v2.19.4)
