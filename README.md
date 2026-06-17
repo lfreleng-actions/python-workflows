@@ -1,57 +1,107 @@
 <!--
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025 The Linux Foundation
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 The Linux Foundation
 -->
 
-# 🛠️ Template Action
+# 🐍 Python Workflows
 
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable-next-line MD013 -->
-[![Linux Foundation](https://img.shields.io/badge/Linux-Foundation-blue)](https://linuxfoundation.org/) [![Source Code](https://img.shields.io/badge/GitHub-100000?logo=github&logoColor=white&color=blue)](https://github.com/lfreleng-actions/actions-template) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0) [![pre-commit.ci status badge]][pre-commit.ci results page] [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/lfreleng-actions/actions-template/badge)](https://scorecard.dev/viewer/?uri=github.com/lfreleng-actions/actions-template)
+[![Linux Foundation](https://img.shields.io/badge/Linux-Foundation-blue)](https://linuxfoundation.org/) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 <!-- prettier-ignore-end -->
 
-This is a template for the other actions in this GitHub organisation.
+Reusable GitHub Actions workflows that encapsulate the canonical Linux
+Foundation Python build / test / release pipeline. Adopt them from a thin
+caller workflow instead of copying hundreds of lines of pipeline YAML into
+every Python repository.
 
-## actions-template
+## Reusable workflows
 
-## Usage Example
+<!-- markdownlint-disable MD013 -->
+
+| Workflow | Purpose | Trigger style |
+| -------- | ------- | ------------- |
+| `.github/workflows/build-test.yaml` | Single-arch build, test, audit, SBOM and Grype scan | Pull request |
+| `.github/workflows/build-test-release.yaml` | Single-arch pipeline plus tag validation, Test PyPI / PyPI publishing and release promotion | Tag push |
+| `.github/workflows/build-test-multiarch.yaml` | Multi-architecture (x64 + arm64) variant with native build hooks for C-extension projects | Pull request |
+| `.github/workflows/build-test-release-multiarch.yaml` | Multi-architecture release variant | Tag push |
+
+<!-- markdownlint-enable MD013 -->
+
+Each pipeline runs a `repository-metadata` job in parallel (an
+informational step that does not gate the build). After `python-build`,
+the test, audit and SBOM/Grype branches run in parallel - none gates
+another, so a pull request surfaces every failure at once (jobs in
+`{ }` run concurrently; `->` denotes sequence):
+
+```text
+python-build -> { python-tests | python-audit | sbom -> grype }
+```
+
+The release variants wrap this with `tag-validate` up front and, after
+the parallel branches, a publishing chain that gates on them:
+`test-pypi -> pypi -> attach-artefacts -> promote-release`. The
+multi-arch variants add a `python-metadata` job and fan the build, test
+and audit jobs across an architecture matrix.
+
+## Usage
+
+Copy a template from [`examples/`](examples/) into your project's
+`.github/workflows/` directory and replace the placeholder `uses:` SHA with
+a pinned release of this repository. Each workflow ships in two forms:
+
+- `github.yaml` — a plain GitHub-native caller (pull-request or tag-push
+  triggered).
+- `gerrit.yaml` — a Gerrit-wrapped caller for projects where Gerrit is the
+  source of truth (SCM), integrating with `gerrit_to_platform` voting.
+
+```text
+examples/
+  build-test/                    { github.yaml, gerrit.yaml }
+  build-test-release/            { github.yaml, gerrit.yaml }
+  build-test-multiarch/          { github.yaml, gerrit.yaml }
+  build-test-release-multiarch/  { github.yaml, gerrit.yaml }
+```
+
+A minimal caller looks like this:
 
 <!-- markdownlint-disable MD046 -->
 
 ```yaml
-steps:
-  - name: "Action template"
-    id: action-template
-    uses: lfreleng-actions/actions-template@main
-    with:
-      input: "placeholder"
+jobs:
+  build-test:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: lfreleng-actions/python-workflows/.github/workflows/build-test.yaml@<release-sha>
 ```
 
 <!-- markdownlint-enable MD046 -->
 
-## Inputs
+All inputs are optional and default to the canonical behaviour; see the
+`inputs:` block at the top of each workflow file for the full, documented
+list (project layout, matrix override, tox, pytest, audit allow-lists, SBOM
+options, Grype severity gate, runner hardening, and Gerrit-aware checkout).
 
-<!-- markdownlint-disable MD013 -->
+## Gerrit support
 
-| Name          | Required | Description  |
-| ------------- | -------- | ------------ |
-| input         | False    | Action input |
+The reusable workflows are Gerrit-aware: when a caller sets the
+`gerrit_refspec` input they check out the unmerged change with
+`checkout-gerrit-change-action` instead of `actions/checkout`. Vote casting
+lives in the `gerrit.yaml` caller examples (clear vote → run → report vote),
+gated by a `GERRIT_DISABLED` toggle on the build-test workflows so they can
+also run manually from the GitHub UI. See the `gerrit.yaml` examples for the
+full pattern.
 
-<!-- markdownlint-enable MD013 -->
+## Testing
 
-## Outputs
+[`.github/workflows/testing.yaml`](.github/workflows/testing.yaml) exercises
+the reusable workflows against three large downstream consumers
+(`dependamerge`, `lftools-uv` and `python-nss-ng`) in parallel, validating
+the workflows end-to-end on every pull request.
 
-<!-- markdownlint-disable MD013 -->
+## Design
 
-| Name          | Description   |
-| ------------- | ------------- |
-| output        | Action output |
-
-<!-- markdownlint-enable MD013 -->
-
-## Implementation Details
-
-## Notes
-
-[pre-commit.ci results page]: https://results.pre-commit.ci/latest/github/lfreleng-actions/actions-template/main
-[pre-commit.ci status badge]: https://results.pre-commit.ci/badge/github/lfreleng-actions/actions-template/main.svg
+See [`docs/BRIEF.md`](docs/BRIEF.md) for the full design rationale and the
+decisions behind the input surface, Gerrit integration, harden-runner
+strategy and multi-architecture structure.

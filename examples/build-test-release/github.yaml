@@ -1,0 +1,55 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# =============================================================================
+# EXAMPLE: Plain GitHub-native caller for the build-test-release workflow
+# =============================================================================
+# Copy this file into your project's .github/workflows/ directory (for
+# example as release.yaml) and adjust the `uses:` ref and the optional
+# `with:` overrides to suit your project.
+#
+# This is the GitHub-native form: it runs on tag pushes, exactly like a
+# standard GitHub project. For projects where Gerrit is the source of truth,
+# use the gerrit.yaml example in this directory instead.
+#
+# The release pipeline publishes to Test PyPI then PyPI, so the caller MUST
+# map the two publishing credentials through the `secrets:` block below.
+# =============================================================================
+name: 'Python Build/Test/Release'
+
+# yamllint disable-line rule:truthy
+on:
+  push:
+    tags:
+      - '**'
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  release:
+    name: 'Build/Test/Release'
+    permissions:
+      contents: write       # Create the GitHub release / attach assets
+      id-token: write       # OIDC for PyPI trusted publishing
+      attestations: write   # Build provenance attestations
+    # REPLACE the pinned SHA below with a python-workflows release SHA.
+    # The all-zero SHA is a non-functional placeholder, NOT a real commit.
+    # yamllint disable-line rule:line-length
+    uses: lfreleng-actions/python-workflows/.github/workflows/build-test-release.yaml@0000000000000000000000000000000000000000  # REPLACE: vX.Y.Z
+    # All inputs are optional. Uncomment and tune only what your project
+    # needs; everything else falls back to sensible defaults.
+    # with:
+    #   path_prefix: '.'              # project root (monorepo subdir, etc.)
+    #   attestations: true            # build provenance attestations
+    #   sigstore_sign: true           # Sigstore-sign build artefacts
+    #   pypi_environment: 'production'        # production PyPI environment
+    #   test_pypi_environment: 'development'  # Test PyPI environment
+    # The two publishing credentials are REQUIRED by the reusable workflow.
+    secrets:
+      pypi_credential: ${{ secrets.PYPI_CREDENTIAL }}
+      test_pypi_credential: ${{ secrets.TEST_PYPI_CREDENTIAL }}

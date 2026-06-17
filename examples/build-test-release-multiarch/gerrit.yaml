@@ -1,0 +1,61 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# =============================================================================
+# EXAMPLE: Gerrit-sourced release caller for build-test-release-multiarch
+# =============================================================================
+# Use this form when Gerrit is the source of truth (SCM) for your project.
+#
+# Unlike the verify workflow (which gerrit_to_platform dispatches per
+# patchset and votes on), a RELEASE is driven by a tag. For Gerrit
+# projects the release tag is pushed to Gerrit and replicated to the
+# GitHub mirror, where it fires this standard tag-push event. There is no
+# Gerrit change context on a tag, so no votes or comments are cast — this
+# caller is therefore identical in shape to the GitHub-native release
+# caller (github.yaml), and release workflows are tag-triggered ONLY (no
+# workflow_dispatch).
+#
+# The multi-arch release pipeline fans the build/test/audit jobs out
+# across an architecture matrix (x64 + arm64 by default) and publishes to
+# Test PyPI then PyPI, so the caller MUST map the two publishing
+# credentials through the `secrets:` block. Native build prerequisites are
+# supplied via the optional `setup_script` hook.
+# =============================================================================
+name: 'Gerrit Release (Multi-Arch)'
+
+# yamllint disable-line rule:truthy
+on:
+  push:
+    tags:
+      - '**'
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  release:
+    name: 'Build/Test/Release'
+    permissions:
+      contents: write       # Create the GitHub release / attach assets
+      id-token: write       # OIDC for PyPI trusted publishing
+      attestations: write   # Build provenance attestations
+    # REPLACE the pinned SHA below with a python-workflows release SHA.
+    # The all-zero SHA is a non-functional placeholder, NOT a real commit.
+    # yamllint disable-line rule:line-length
+    uses: lfreleng-actions/python-workflows/.github/workflows/build-test-release-multiarch.yaml@0000000000000000000000000000000000000000  # REPLACE: vX.Y.Z
+    # Multi-arch / native inputs are optional; uncomment to tune.
+    # with:
+    #   setup_script: '.github/scripts/setup-nss.sh'
+    #   make: true
+    #   make_args: 'deps-nss env-github-actions'
+    #   auditwheel: true
+    #   manylinux_version: 'manylinux_2_38'
+    #   runners: '<see workflow default: x64 + arm64>'
+    # The two publishing credentials are REQUIRED by the reusable workflow.
+    secrets:
+      pypi_credential: ${{ secrets.PYPI_CREDENTIAL }}
+      test_pypi_credential: ${{ secrets.TEST_PYPI_CREDENTIAL }}

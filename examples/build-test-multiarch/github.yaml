@@ -1,0 +1,69 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# =============================================================================
+# EXAMPLE: Plain GitHub-native caller for the build-test-multiarch workflow
+# =============================================================================
+# Copy this file into your project's .github/workflows/ directory (for
+# example as build-test.yaml) and adjust the `uses:` ref and the optional
+# `with:` overrides to suit your project.
+#
+# This is the GitHub-native form: it runs on pull requests, exactly like a
+# standard GitHub project. For projects where Gerrit is the source of truth,
+# use the gerrit.yaml example in this directory instead.
+#
+# The multi-arch workflow fans the pipeline out across an architecture
+# matrix (x64 + arm64 by default); native build prerequisites are supplied
+# via the optional `setup_script` hook.
+# =============================================================================
+name: 'Python Build/Test (Multi-Arch)'
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build-test:
+    name: 'Build/Test'
+    permissions:
+      contents: read
+      pull-requests: read
+    # REPLACE the pinned SHA below with a python-workflows release SHA.
+    # The all-zero SHA is a non-functional placeholder, NOT a real commit.
+    # yamllint disable-line rule:line-length
+    uses: lfreleng-actions/python-workflows/.github/workflows/build-test-multiarch.yaml@0000000000000000000000000000000000000000  # REPLACE: vX.Y.Z
+    # All inputs are optional. Uncomment and tune only what your project
+    # needs; everything else falls back to sensible defaults.
+    # with:
+    #   path_prefix: '.'              # project root (monorepo subdir, etc.)
+    #   build_formats: 'both'         # 'sdist', 'wheel', or 'both'
+    #   tox_build: false              # build via tox
+    #   tox_tests: false              # run tests via tox
+    #   pytest_args: ''               # extra pytest flags
+    #   test_permit_fail: false       # soft-fail tests
+    #   audit_permit_fail: false      # soft-fail dependency audit
+    #   sbom_include_dev: false       # include dev deps in the SBOM
+    #   grype_fail_on: 'medium'       # Grype severity gate
+    #   harden_runner_egress: 'block' # 'block' (default) or 'audit'
+    #   # --- Multi-arch inputs ---
+    #   # JSON array of {runner, arch} objects defining the arch matrix:
+    # yamllint disable-line rule:line-length
+    #   runners: '[{"runner":"ubuntu-latest","arch":"x64"},{"runner":"ubuntu-24.04-arm","arch":"arm64"}]'
+    #   auditwheel: true              # repair Linux wheels (manylinux)
+    #   manylinux_version: 'manylinux_2_38'  # manylinux platform tag
+    #   make: false                   # run make targets via python-build
+    #   make_args: ''                 # arguments passed to make-action
+    #   setup_script: '.github/scripts/setup-nss.sh'  # native prereqs hook
+    #   ld_library_path: ''           # LD_LIBRARY_PATH for the test step

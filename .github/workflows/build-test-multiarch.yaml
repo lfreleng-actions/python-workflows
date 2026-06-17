@@ -1,0 +1,898 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# Reusable Python build/test pipeline (multiple architectures).
+#
+# Reproduces the canonical Linux Foundation Python pipeline, fanned out
+# across an architecture matrix (x64 + arm64 by default). The
+# repository-metadata job runs in parallel as an informational step.
+# After python-build the jobs in { } run in parallel; none gates
+# another, so a PR surfaces every failure (-> denotes sequence):
+#   python-metadata -> python-build (matrixed) ->
+#   { tests | audit (matrixed) | sbom -> grype (per-arch) }
+#
+# Each matrixed build/test/audit job runs on a 2-D matrix of
+# architecture (from the `runners` input) crossed with Python version
+# (discovered by the python-metadata job). The SBOM + Grype job runs
+# per-arch only, because native dependency trees differ per architecture
+# but not per Python version.
+#
+# Native pre-build steps (system packages, C builds) are supplied by the
+# consumer through the optional `setup_script` hook, which runs in every
+# matrixed job type after checkout and before the action.
+#
+# Call this from a thin caller workflow; see examples/build-test-multiarch/
+# for both a plain GitHub-native caller and a Gerrit-wrapped caller.
+name: '[R] Python Build/Test Multi-Arch'
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_call:
+    inputs:
+      # --- Checkout target (defaults to the calling repository) ---
+      repository:
+        description: 'Repository to check out (owner/name)'
+        required: false
+        type: string
+        default: ''
+      ref:
+        description: 'Branch/tag/SHA to check out (empty = default branch)'
+        required: false
+        type: string
+        default: ''
+
+      # --- Project layout / build ---
+      path_prefix:
+        description: 'Path to the project root directory'
+        required: false
+        type: string
+        default: '.'
+      build_formats:
+        description: "Build formats: 'sdist', 'wheel', or 'both'"
+        required: false
+        type: string
+        default: ''
+      tox_build:
+        description: 'Build the project using tox'
+        required: false
+        type: boolean
+        default: false
+
+      # --- Multi-architecture build ---
+      runners:
+        description: >-
+          JSON array of {runner, arch} objects defining the architecture
+          matrix. 'runner' supplies runs-on; 'arch' names artefacts. The
+          default includes ubuntu-24.04-arm; GitHub-hosted arm64 runners
+          are freely available on public repositories, so private repos
+          may need to override this input.
+        required: false
+        type: string
+        # yamllint disable-line rule:line-length
+        default: '[{"runner":"ubuntu-latest","arch":"x64"},{"runner":"ubuntu-24.04-arm","arch":"arm64"}]'
+      auditwheel:
+        description: 'Repair Linux wheels with auditwheel (manylinux)'
+        required: false
+        type: boolean
+        default: true
+      manylinux_version:
+        description: 'manylinux platform tag for auditwheel repair'
+        required: false
+        type: string
+        default: 'manylinux_2_38'
+      make:
+        description: 'Run make targets via python-build-action'
+        required: false
+        type: boolean
+        default: false
+      make_args:
+        description: 'Arguments passed to make-action (via python-build)'
+        required: false
+        type: string
+        default: ''
+      setup_script:
+        description: >-
+          Path to a committed setup script run after checkout in every
+          matrixed job (build/test/audit/sbom). Empty = skip.
+        required: false
+        type: string
+        default: ''
+      ld_library_path:
+        description: 'LD_LIBRARY_PATH exported for the test step'
+        required: false
+        type: string
+        default: ''
+
+      # --- Tests ---
+      tox_tests:
+        description: 'Run tests using tox'
+        required: false
+        type: boolean
+        default: false
+      tox_envs:
+        description: 'Comma-separated list of tox environments to run'
+        required: false
+        type: string
+        default: ''
+      tests_path:
+        description: 'Path to the test directory'
+        required: false
+        type: string
+        default: ''
+      pytest_args:
+        description: 'Extra arguments passed to pytest'
+        required: false
+        type: string
+        default: ''
+      test_permit_fail:
+        description: 'Permit test failures without failing the workflow'
+        required: false
+        type: boolean
+        default: false
+
+      # --- Audit ---
+      audit_permit_fail:
+        description: 'Permit dependency audit failures (the NO_BLOCK pattern)'
+        required: false
+        type: boolean
+        default: false
+      audit_ignore_vulns:
+        description: 'Vulnerability identifiers to ignore during the audit'
+        required: false
+        type: string
+        default: ''
+      audit_allow_list_config:
+        description: 'Allow-list config reference for python-audit-action'
+        required: false
+        type: string
+        default: ''
+
+      # --- SBOM ---
+      sbom_include_dev:
+        description: 'Include development dependencies in the SBOM'
+        required: false
+        type: boolean
+        default: false
+      sbom_format:
+        description: "SBOM output format: 'json' or 'both'"
+        required: false
+        type: string
+        default: 'both'
+
+      # --- Grype scan ---
+      grype_fail_on:
+        description: 'Minimum severity that fails the Grype scan'
+        required: false
+        type: string
+        default: 'medium'
+      grype_permit_fail:
+        description: >-
+          Permit Grype findings without failing the job. When false, falls
+          back to the NO_BLOCK_AUDIT_FAIL repository variable at runtime.
+        required: false
+        type: boolean
+        default: false
+
+      # --- Runner hardening ---
+      harden_runner_egress:
+        description: "Harden-runner egress policy: 'block' or 'audit'"
+        required: false
+        type: string
+        default: 'block'
+      harden_runner_allowlist:
+        description: 'Out-of-band harden-runner allow-list configuration'
+        required: false
+        type: string
+        # yamllint disable-line rule:line-length
+        default: 'lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@18d9c4446bea555d0783e850f6d295f844fe8f67'  # v0.1.1
+
+      # --- Gerrit-aware checkout (empty unless dispatched via Gerrit) ---
+      gerrit_refspec:
+        description: 'Gerrit refspec of the change under test'
+        required: false
+        type: string
+        default: ''
+      gerrit_project:
+        description: 'Gerrit project name'
+        required: false
+        type: string
+        default: ''
+      gerrit_branch:
+        description: 'Gerrit target branch'
+        required: false
+        type: string
+        default: ''
+      gerrit_url:
+        description: >-
+          Gerrit server URL. Empty falls back to the GERRIT_URL repository
+          variable at runtime.
+        required: false
+        type: string
+        default: ''
+
+permissions: {}
+
+jobs:
+  gerrit-validate:
+    name: 'Validate Gerrit Inputs'
+    # Fails fast with a clear message when gerrit_refspec is set without
+    # the project/branch the Gerrit checkout path also requires. The
+    # build-chain root job depends on this, so invalid Gerrit inputs stop
+    # the pipeline early and cleanly. This job always runs (only the
+    # validation step is conditional), so gating dependents on it does
+    # not trip GitHub's "skipped need skips dependents" behaviour.
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 2
+    steps:
+      - name: 'Require Gerrit project, branch and URL'
+        if: inputs.gerrit_refspec != ''
+        shell: bash
+        env:
+          GERRIT_PROJECT: ${{ inputs.gerrit_project }}
+          GERRIT_BRANCH: ${{ inputs.gerrit_branch }}
+          # yamllint disable-line rule:line-length
+          GERRIT_URL: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
+        run: |
+          # gerrit_refspec is set, so the Gerrit checkout path runs and
+          # also requires gerrit_project, gerrit_branch and a resolvable
+          # Gerrit URL (the gerrit_url input or the GERRIT_URL variable).
+          missing=''
+          if [ -z "${GERRIT_PROJECT}" ]; then
+            missing="${missing} gerrit_project"
+          fi
+          if [ -z "${GERRIT_BRANCH}" ]; then
+            missing="${missing} gerrit_branch"
+          fi
+          if [ -z "${GERRIT_URL}" ]; then
+            missing="${missing} gerrit_url/GERRIT_URL"
+          fi
+          if [ -n "${missing}" ]; then
+            echo "::error::gerrit_refspec is set but missing:${missing}"
+            exit 1
+          fi
+          echo "Gerrit inputs validated ✅"
+
+  repository-metadata:
+    name: 'Repository Metadata'
+    needs: gerrit-validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 5
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+      - name: 'Harden runner (block)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: 'Harden runner (audit)'
+        if: inputs.harden_runner_egress == 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout Gerrit change'
+        if: inputs.gerrit_refspec != ''
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/checkout-gerrit-change-action@8523d768952d9690702b4696a8310d2a84b1be39  # v1.0.1
+        with:
+          gerrit-refspec: ${{ inputs.gerrit_refspec }}
+          gerrit-project: ${{ inputs.gerrit_project }}
+          # yamllint disable-line rule:line-length
+          gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
+          delay: '0s'
+          ref: refs/heads/${{ inputs.gerrit_branch }}
+      - name: 'Checkout repository'
+        if: inputs.gerrit_refspec == ''
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: 'Gather repository metadata'
+        id: repo-metadata
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/repository-metadata-action@ceabcd987d13d7bfefd2372e01eebb0ddac45956  # v0.2.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_summary: 'true'
+          gerrit_summary: ${{ inputs.gerrit_refspec != '' }}
+          artifact_upload: 'true'
+          artifact_formats: 'json'
+
+  python-metadata:
+    name: 'Extract Project Metadata'
+    needs: gerrit-validate
+    runs-on: ubuntu-latest
+    outputs:
+      # Bare JSON array of Python versions consumed by the matrixed jobs.
+      versions_json: ${{ steps.versions.outputs.versions_json }}
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+      - name: 'Harden runner (block)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: 'Harden runner (audit)'
+        if: inputs.harden_runner_egress == 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout Gerrit change'
+        if: inputs.gerrit_refspec != ''
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/checkout-gerrit-change-action@8523d768952d9690702b4696a8310d2a84b1be39  # v1.0.1
+        with:
+          gerrit-refspec: ${{ inputs.gerrit_refspec }}
+          gerrit-project: ${{ inputs.gerrit_project }}
+          # yamllint disable-line rule:line-length
+          gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
+          delay: '0s'
+          ref: refs/heads/${{ inputs.gerrit_branch }}
+      - name: 'Checkout repository'
+        if: inputs.gerrit_refspec == ''
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: 'Extract Python project metadata'
+        id: metadata
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/build-metadata-action@bc866421c816f63e6ab09f3d42bf95566be50940  # v0.4.0
+        with:
+          path_prefix: ${{ inputs.path_prefix }}
+          output_format: summary
+          include_environment: true
+          use_version_extract: true
+          verbose: true
+
+      # Extract the bare version list from the build-metadata matrix
+      # object so the matrixed jobs can cross it with the architecture
+      # dimension.
+      - name: 'Derive Python version matrix'
+        id: versions
+        shell: bash
+        env:
+          MATRIX_JSON: ${{ steps.metadata.outputs.python_matrix_json }}
+        run: |
+          # Derive the bare JSON array of Python versions
+          versions=$(printf '%s' "${MATRIX_JSON}" | \
+            jq -c '."python-version"')
+          echo "Python versions: ${versions}"
+          echo "versions_json=${versions}" >> "$GITHUB_OUTPUT"
+
+  python-build:
+    name: 'Build ${{ matrix.target.arch }} py${{ matrix.python-version }}'
+    needs: 'python-metadata'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(inputs.runners) }}
+        # yamllint disable-line rule:line-length
+        python-version: ${{ fromJson(needs.python-metadata.outputs.versions_json) }}
+    runs-on: ${{ matrix.target.runner }}
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+      - name: 'Harden runner (block)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: 'Harden runner (audit)'
+        if: inputs.harden_runner_egress == 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout Gerrit change'
+        if: inputs.gerrit_refspec != ''
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/checkout-gerrit-change-action@8523d768952d9690702b4696a8310d2a84b1be39  # v1.0.1
+        with:
+          gerrit-refspec: ${{ inputs.gerrit_refspec }}
+          gerrit-project: ${{ inputs.gerrit_project }}
+          # yamllint disable-line rule:line-length
+          gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
+          delay: '0s'
+          ref: refs/heads/${{ inputs.gerrit_branch }}
+      - name: 'Checkout repository'
+        if: inputs.gerrit_refspec == ''
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: 'Validate setup script path'
+        if: inputs.setup_script != ''
+        id: setup-script-check
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/path-check-action@9606e61c870025bc956e63156d1d55c5df54426c  # v0.2.0
+        with:
+          path: ${{ inputs.setup_script }}
+      - name: 'Run setup script'
+        if: inputs.setup_script != ''
+        shell: bash
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup_script }}
+          SCRIPT_TYPE: ${{ steps.setup-script-check.outputs.type }}
+        run: |
+          # Run the consumer-supplied native setup script
+          if [ "${SCRIPT_TYPE}" != 'file' ]; then
+            echo "::error::setup_script '${SETUP_SCRIPT}' is not a file"
+            exit 1
+          fi
+          bash "${SETUP_SCRIPT}"
+
+      - name: 'Build Python project ${{ matrix.python-version }}'
+        id: python-build
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/python-build-action@5f570d5d17a7315074a824a91c6a705b6fc5c7dd  # v1.1.2
+        with:
+          # yamllint disable-line rule:line-length
+          artefact_name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
+          path_prefix: ${{ inputs.path_prefix }}
+          python_version: ${{ matrix.python-version }}
+          build_formats: ${{ inputs.build_formats || 'both' }}
+          tox_build: ${{ inputs.tox_build }}
+          auditwheel: ${{ inputs.auditwheel }}
+          manylinux_version: ${{ inputs.manylinux_version }}
+          make: ${{ inputs.make }}
+          make_args: ${{ inputs.make_args }}
+
+  # PR variant: gate downstream on python-metadata (the matrix source),
+  # not on aggregate python-build success. python-build is a matrix
+  # (arch x version), so gating on it would skip the whole test/audit
+  # matrix whenever any one cell fails. Gating on python-metadata lets
+  # every successfully-built cell still run, so a PR surfaces every
+  # failure. (The release variant gates strictly on python-build.)
+  python-tests:
+    name: 'Tests ${{ matrix.target.arch }} py${{ matrix.python-version }}'
+    needs: ['python-metadata', 'python-build']
+    if: ${{ !cancelled() && needs.python-metadata.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(inputs.runners) }}
+        # yamllint disable-line rule:line-length
+        python-version: ${{ fromJson(needs.python-metadata.outputs.versions_json) }}
+    runs-on: ${{ matrix.target.runner }}
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+      - name: 'Harden runner (block)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: 'Harden runner (audit)'
+        if: inputs.harden_runner_egress == 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout Gerrit change'
+        if: inputs.gerrit_refspec != ''
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/checkout-gerrit-change-action@8523d768952d9690702b4696a8310d2a84b1be39  # v1.0.1
+        with:
+          gerrit-refspec: ${{ inputs.gerrit_refspec }}
+          gerrit-project: ${{ inputs.gerrit_project }}
+          # yamllint disable-line rule:line-length
+          gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
+          delay: '0s'
+          ref: refs/heads/${{ inputs.gerrit_branch }}
+      - name: 'Checkout repository'
+        if: inputs.gerrit_refspec == ''
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: 'Validate setup script path'
+        if: inputs.setup_script != ''
+        id: setup-script-check
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/path-check-action@9606e61c870025bc956e63156d1d55c5df54426c  # v0.2.0
+        with:
+          path: ${{ inputs.setup_script }}
+      - name: 'Run setup script'
+        if: inputs.setup_script != ''
+        shell: bash
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup_script }}
+          SCRIPT_TYPE: ${{ steps.setup-script-check.outputs.type }}
+        run: |
+          # Run the consumer-supplied native setup script
+          if [ "${SCRIPT_TYPE}" != 'file' ]; then
+            echo "::error::setup_script '${SETUP_SCRIPT}' is not a file"
+            exit 1
+          fi
+          bash "${SETUP_SCRIPT}"
+
+      - name: 'Python tests [pytest] ${{ matrix.python-version }}'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/python-test-action@aa753462f090101dcb0c4708e9499f55e276e373  # v1.1.2
+        env:
+          LD_LIBRARY_PATH: ${{ inputs.ld_library_path }}
+        with:
+          python_version: ${{ matrix.python-version }}
+          path_prefix: ${{ inputs.path_prefix }}
+          tox_tests: ${{ inputs.tox_tests }}
+          tox_envs: ${{ inputs.tox_envs }}
+          tests_path: ${{ inputs.tests_path }}
+          pytest_args: ${{ inputs.pytest_args }}
+          permit_fail: ${{ inputs.test_permit_fail }}
+          # yamllint disable-line rule:line-length
+          artefact_name: coverage-${{ matrix.target.arch }}-py${{ matrix.python-version }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  python-audit:
+    name: 'Audit ${{ matrix.target.arch }} py${{ matrix.python-version }}'
+    needs: ['python-metadata', 'python-build']
+    if: ${{ !cancelled() && needs.python-metadata.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(inputs.runners) }}
+        # yamllint disable-line rule:line-length
+        python-version: ${{ fromJson(needs.python-metadata.outputs.versions_json) }}
+    runs-on: ${{ matrix.target.runner }}
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+      - name: 'Harden runner (block)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: 'Harden runner (audit)'
+        if: inputs.harden_runner_egress == 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout Gerrit change'
+        if: inputs.gerrit_refspec != ''
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/checkout-gerrit-change-action@8523d768952d9690702b4696a8310d2a84b1be39  # v1.0.1
+        with:
+          gerrit-refspec: ${{ inputs.gerrit_refspec }}
+          gerrit-project: ${{ inputs.gerrit_project }}
+          # yamllint disable-line rule:line-length
+          gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
+          delay: '0s'
+          ref: refs/heads/${{ inputs.gerrit_branch }}
+      - name: 'Checkout repository'
+        if: inputs.gerrit_refspec == ''
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: 'Validate setup script path'
+        if: inputs.setup_script != ''
+        id: setup-script-check
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/path-check-action@9606e61c870025bc956e63156d1d55c5df54426c  # v0.2.0
+        with:
+          path: ${{ inputs.setup_script }}
+      - name: 'Run setup script'
+        if: inputs.setup_script != ''
+        shell: bash
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup_script }}
+          SCRIPT_TYPE: ${{ steps.setup-script-check.outputs.type }}
+        run: |
+          # Run the consumer-supplied native setup script
+          if [ "${SCRIPT_TYPE}" != 'file' ]; then
+            echo "::error::setup_script '${SETUP_SCRIPT}' is not a file"
+            exit 1
+          fi
+          bash "${SETUP_SCRIPT}"
+
+      - name: 'Audit dependencies ${{ matrix.python-version }}'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/python-audit-action@78b00a589ced3e8f70d0cd03fd592b8c92298dfd  # v0.3.0
+        with:
+          python_version: ${{ matrix.python-version }}
+          path_prefix: ${{ inputs.path_prefix }}
+          permit_fail: ${{ inputs.audit_permit_fail }}
+          ignore_vulns: ${{ inputs.audit_ignore_vulns }}
+          config: ${{ inputs.audit_allow_list_config }}
+          # yamllint disable-line rule:line-length
+          artefact_name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # PR variant: gate SBOM/Grype on python-metadata too (like
+  # tests/audit), so a single failed build cell does not hide
+  # security findings. (The release variant keeps strict
+  # python-build gating.)
+  sbom:
+    name: 'SBOM ${{ matrix.target.arch }}'
+    needs: ['python-metadata', 'python-build']
+    if: ${{ !cancelled() && needs.python-metadata.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(inputs.runners) }}
+    runs-on: ${{ matrix.target.runner }}
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+      - name: 'Harden runner (block)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: 'Harden runner (audit)'
+        if: inputs.harden_runner_egress == 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout Gerrit change'
+        if: inputs.gerrit_refspec != ''
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/checkout-gerrit-change-action@8523d768952d9690702b4696a8310d2a84b1be39  # v1.0.1
+        with:
+          gerrit-refspec: ${{ inputs.gerrit_refspec }}
+          gerrit-project: ${{ inputs.gerrit_project }}
+          # yamllint disable-line rule:line-length
+          gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
+          delay: '0s'
+          ref: refs/heads/${{ inputs.gerrit_branch }}
+      - name: 'Checkout repository'
+        if: inputs.gerrit_refspec == ''
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: 'Validate setup script path'
+        if: inputs.setup_script != ''
+        id: setup-script-check
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/path-check-action@9606e61c870025bc956e63156d1d55c5df54426c  # v0.2.0
+        with:
+          path: ${{ inputs.setup_script }}
+      - name: 'Run setup script'
+        if: inputs.setup_script != ''
+        shell: bash
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup_script }}
+          SCRIPT_TYPE: ${{ steps.setup-script-check.outputs.type }}
+        run: |
+          # Run the consumer-supplied native setup script
+          if [ "${SCRIPT_TYPE}" != 'file' ]; then
+            echo "::error::setup_script '${SETUP_SCRIPT}' is not a file"
+            exit 1
+          fi
+          bash "${SETUP_SCRIPT}"
+
+      - name: 'Generate SBOM ${{ matrix.target.arch }}'
+        id: sbom
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/python-sbom-action@ae4aca2ef28d7da4ec95049cc78be43e632d322a  # v0.1.0
+        with:
+          path_prefix: ${{ inputs.path_prefix }}
+          include_dev: ${{ inputs.sbom_include_dev }}
+          # The Grype audit below scans the JSON SBOM, so JSON must
+          # always exist. sbom_format is documented as 'json' or
+          # 'both'; a stray, undocumented 'xml' is coerced to 'both'
+          # because workflow_call inputs cannot enforce an enum.
+          # yamllint disable-line rule:line-length
+          sbom_format: ${{ inputs.sbom_format == 'xml' && 'both' || inputs.sbom_format }}
+
+      - name: 'Upload SBOM artifacts'
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          # yamllint disable-line rule:line-length
+          name: sbom-files-${{ matrix.target.arch }}
+          # Glob matches whichever SBOM formats sbom_format produced
+          path: sbom-cyclonedx.*
+          retention-days: 45
+          if-no-files-found: warn
+
+      - name: 'SBOM summary'
+        shell: bash
+        run: |
+          # SBOM summary
+          {
+            echo "## SBOM Summary (${{ matrix.target.arch }})"
+            echo "SBOM count: ${{ steps.sbom.outputs.component_count }}"
+            echo "Tool used: ${{ steps.sbom.outputs.dependency_manager }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 'Install Grype'
+        id: grype
+        # yamllint disable-line rule:line-length
+        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        with:
+          cache-db: 'true'
+
+      # The grype_permit_fail input (or, when unset, the NO_BLOCK_AUDIT_FAIL
+      # repository variable) disables failure propagation so pull requests
+      # can proceed when blocked by newly discovered CVEs in transitive
+      # dependencies.
+      - name: 'Grype audit SBOM'
+        id: grype-audit
+        env:
+          GRYPE_CMD: ${{ steps.grype.outputs.cmd }}
+          GRYPE_FAIL_ON: ${{ inputs.grype_fail_on }}
+          # yamllint disable-line rule:line-length
+          NO_BLOCK_AUDIT_FAIL: ${{ inputs.grype_permit_fail || vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
+        shell: bash
+        run: |
+          # The audit scans the JSON CycloneDX SBOM, which the sbom step
+          # always generates. Guard anyway so the step still emits a
+          # summary (and honours grype_permit_fail) if it is missing.
+          if [ ! -f sbom-cyclonedx.json ]; then
+            echo "::warning::No JSON SBOM found; Grype scan skipped"
+            {
+              echo "## Grype Vulnerability Scan"
+              echo ""
+              echo "No JSON SBOM available to scan."
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "${NO_BLOCK_AUDIT_FAIL}" = "true" ]; then
+              exit 0
+            fi
+            echo "::error::No JSON SBOM available for the Grype audit"
+            exit 1
+          fi
+
+          # Run grype once, emitting all three output formats
+          set +e
+          "${GRYPE_CMD}" \
+            -o "sarif=grype-results.sarif" \
+            -o "json=grype-results.json" \
+            -o "table=grype-results.txt" \
+            --fail-on "${GRYPE_FAIL_ON}" \
+            "sbom:sbom-cyclonedx.json"
+          grype_exit=$?
+          set -e
+
+          echo "--- Grype scan results ---"
+          if [ -f grype-results.txt ]; then
+            cat grype-results.txt
+          else
+            echo "No table output produced"
+          fi
+
+          # grype returns 2 when it finds vulnerabilities at or above the
+          # configured --fail-on threshold; any other non-zero exit is
+          # treated as a grype failure.
+          if [ "${grype_exit}" = "0" ]; then
+            echo "No vulnerabilities at or above '${GRYPE_FAIL_ON}'"
+            exit 0
+          fi
+          if [ "${grype_exit}" != "2" ]; then
+            echo "::error::Grype exited with code ${grype_exit}"
+            exit "${grype_exit}"
+          fi
+
+          if [ "${NO_BLOCK_AUDIT_FAIL}" = "true" ]; then
+            echo "::warning::Grype found vulnerabilities at or above the" \
+              "'${GRYPE_FAIL_ON}' threshold, but failures are permitted" \
+              "so the job will not fail."
+            exit 0
+          fi
+          echo "::error::Grype found vulnerabilities at or above the" \
+            "'${GRYPE_FAIL_ON}' severity threshold. See the table above" \
+            "for the offending packages and CVEs."
+          exit 1
+
+      - name: 'Upload Grype scan results'
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          # yamllint disable-line rule:line-length
+          name: grype-scan-results-${{ matrix.target.arch }}
+          path: |
+            grype-results.sarif
+            grype-results.json
+            grype-results.txt
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: 'Grype summary'
+        if: always()
+        shell: bash
+        run: |
+          # Render a Markdown summary of the Grype findings
+          {
+            echo "## Grype Vulnerability Scan (${{ matrix.target.arch }})"
+            echo ""
+            if [ ! -f grype-results.json ]; then
+              echo "No scan results available"
+              exit 0
+            fi
+            match_count=$(jq '.matches | length' grype-results.json)
+            if [ "${match_count}" = "0" ]; then
+              echo "No vulnerabilities found at or above the configured" \
+                "severity threshold."
+              exit 0
+            fi
+            echo "Found ${match_count} matching Grype record(s)."
+          } >> "$GITHUB_STEP_SUMMARY"

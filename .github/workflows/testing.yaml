@@ -1,17 +1,25 @@
 ---
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025 The Linux Foundation
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
 
-# Action test/validation workflow
-name: "Test GitHub Action 🧪"
+# Exercises the reusable workflows in this repository against three of the
+# largest downstream Python consumers, in parallel, to prove the reusable
+# workflows function end-to-end:
+#   * dependamerge  (standard single-arch) -> build-test.yaml
+#   * lftools-uv    (standard single-arch) -> build-test.yaml
+#   * python-nss-ng (multi-arch C build)   -> build-test-multiarch.yaml
+#
+# The reusable workflows are referenced by LOCAL path so this always
+# validates the current branch's workflows. The standard targets are
+# checked out at their default/HEAD branch; the python-nss-ng leg is
+# pinned to the v1.2.0 release commit (see ref: below).
+name: 'Testing 🧪'
 
 # yamllint disable-line rule:truthy
 on:
   workflow_dispatch:
-  push:
-    branches: ["main"]
   pull_request:
-    branches: ["main"]
+    branches: ['main']
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
@@ -20,56 +28,36 @@ concurrency:
 permissions: {}
 
 jobs:
-  ### Test the GitHub Action in this Repository ###
-  tests:
-    name: "Test local GitHub Action"
-    runs-on: ubuntu-latest
+  # Standard single-arch consumers, fanned out in parallel via a matrix.
+  standard:
+    name: 'Standard'
+    strategy:
+      fail-fast: false
+      matrix:
+        repository:
+          - lfreleng-actions/dependamerge
+          - lfreleng-actions/lftools-uv
     permissions:
       contents: read
-    timeout-minutes: 10 # Increase this timeout value as needed
-    steps:
-      # Harden the runner used by this workflow
-      # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
+      pull-requests: read
+    uses: ./.github/workflows/build-test.yaml
+    with:
+      repository: ${{ matrix.repository }}
 
-      - name: "Checkout repository"
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      # Perform setup prior to running test(s)
-      - name: "Testing setup step"
-        shell: bash
-        run: |
-          # Testing setup step
-          echo "Testing setup step"
-          echo "Testing setup step/summary output" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: "Running local action: ${{ github.repository }}"
-        uses: ./
-        with:
-          input: "test input 💬"
-
-      - name: "Validated local action: ${{ github.repository }}"
-        shell: bash
-        run: |
-          # Local action validation
-          echo "Validated local action: ${{ github.repository }}"
-          echo "Validation step summary output" >> "$GITHUB_STEP_SUMMARY"
-
-      # yamllint disable-line rule:line-length
-      - name: "Running local action: ${{ github.repository }} [Override Failure]"
-        uses: ./
-        id: failure
-        continue-on-error: true
-        with:
-          invalid_input: "Some garbage"
-
-      # Failure testing is also important
-      - name: "Error if step above did NOT fail"
-        if: steps.failure.outcome == 'success'
-        shell: bash
-        run: |
-          # Error if step above did NOT fail
-          echo "Error: previous test step did NOT fail ❌"
-          exit 1
+  # Multi-arch C consumer (runs in parallel with the standard matrix).
+  #
+  # python-nss-ng provides the committed native setup script
+  # (.github/scripts/setup-nss.sh) consumed via the setup_script input.
+  # Pinned to the v1.2.0 release commit of the upstream repository.
+  multiarch:
+    name: 'Multi-Arch'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/build-test-multiarch.yaml
+    with:
+      repository: lfreleng-actions/python-nss-ng
+      ref: e6e197516189faac861f191a6a48f0e1d993ef3d  # v1.2.0
+      make: true
+      make_args: 'deps-nss env-github-actions'
+      setup_script: '.github/scripts/setup-nss.sh'
