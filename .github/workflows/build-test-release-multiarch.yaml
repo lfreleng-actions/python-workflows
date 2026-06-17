@@ -616,8 +616,11 @@ jobs:
   # python-metadata to surface every failure on a PR.)
   python-tests:
     name: 'Tests ${{ matrix.target.arch }} py${{ matrix.python-version }}'
-    needs: ['python-metadata', 'python-build']
-    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
+    # Deferred until the audit operations (python-audit and the SBOM/Grype
+    # scan) pass, so the expensive test matrix is skipped on audit failure.
+    needs: ['python-metadata', 'python-build', 'python-audit', 'sbom']
+    # yamllint disable-line rule:line-length
+    if: ${{ !cancelled() && needs.python-build.result == 'success' && needs.python-audit.result == 'success' && needs.sbom.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -1019,11 +1022,11 @@ jobs:
   test-pypi:
     name: 'Test PyPI Publishing'
     runs-on: 'ubuntu-latest'
+    # python-tests already gates on python-audit and the SBOM/Grype scan,
+    # so depending on the full test matrix here orders publishing last.
     needs:
       - 'tag-validate'
       - 'python-tests'
-      - 'python-audit'
-      - 'sbom'
     environment:
       name: ${{ inputs.test_pypi_environment }}
     permissions:
