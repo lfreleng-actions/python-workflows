@@ -38,11 +38,18 @@ another, so a pull request surfaces every failure at once (jobs in
 python-build -> { python-tests | python-audit | sbom -> grype }
 ```
 
-The release variants wrap this with `tag-validate` up front and, after
-the parallel branches, a publishing chain that gates on them:
-`test-pypi -> pypi -> attach-artefacts -> promote-release`. The
-multi-arch variants add a `python-metadata` job and fan the build, test
-and audit jobs across an architecture matrix.
+The release variants wrap this with `tag-validate` up front and add a
+publishing chain at the end. They also **defer `python-tests` until
+`python-audit` and `grype` have both passed**, so a failing audit skips
+the expensive test matrix and never reaches publishing:
+
+```text
+python-build -> { python-audit | sbom -> grype } -> python-tests
+  -> test-pypi -> pypi -> attach-artefacts -> promote-release
+```
+
+The multi-arch variants add a `python-metadata` job and fan the build,
+test and audit jobs across an architecture matrix.
 
 ## Usage
 

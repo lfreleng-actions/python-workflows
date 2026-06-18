@@ -451,8 +451,14 @@ jobs:
   python-tests:
     name: 'Python Tests'
     runs-on: 'ubuntu-latest'
-    needs: 'python-build'
-    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
+    # Deferred until the audit operations (python-audit and Grype) pass, so
+    # the expensive test matrix is skipped when either audit step fails.
+    needs:
+      - 'python-build'
+      - 'python-audit'
+      - 'grype'
+    # yamllint disable-line rule:line-length
+    if: ${{ !cancelled() && needs.python-build.result == 'success' && needs.python-audit.result == 'success' && needs.grype.result == 'success' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.python-build.outputs.matrix_json) }}
@@ -813,11 +819,11 @@ jobs:
   test-pypi:
     name: 'Test PyPI Publishing'
     runs-on: 'ubuntu-latest'
+    # python-tests already gates on python-audit and Grype, so depending on
+    # the full test matrix here is sufficient to order publishing last.
     needs:
       - 'tag-validate'
       - 'python-tests'
-      - 'python-audit'
-      - 'grype'
     environment:
       name: ${{ inputs.test_pypi_environment }}
     permissions:
