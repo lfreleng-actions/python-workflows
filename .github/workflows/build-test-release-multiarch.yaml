@@ -904,9 +904,10 @@ jobs:
       fail-fast: false
       matrix:
         target: ${{ fromJson(inputs.runners) }}
-    # Grype scans the architecture-independent CycloneDX JSON SBOM, so the
-    # per-arch scans all run on a standard x64 runner regardless of the
-    # target architecture that produced each SBOM.
+    # Each SBOM is architecture-specific (native dependency trees can
+    # differ per arch), but scanning a CycloneDX JSON SBOM does not require
+    # the target architecture, so the per-arch scans all run on a standard
+    # x64 runner.
     runs-on: 'ubuntu-latest'
     permissions:
       contents: read
