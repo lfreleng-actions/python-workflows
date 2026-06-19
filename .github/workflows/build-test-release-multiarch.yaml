@@ -7,16 +7,17 @@
 # Reproduces the canonical Linux Foundation Python release pipeline,
 # fanned out across an architecture matrix (x64 + arm64 by default). The
 # repository-metadata job runs in parallel as an informational step.
-# After python-build the jobs in { } run in parallel (none gates
-# another, so all failures surface); the publish chain then gates on
-# all of them:
+# After python-build, audit and the SBOM/Grype scan run in parallel;
+# python-tests is deferred until they pass, then the release is promoted.
+# PyPI publishing is performed by the CALLER (see the attach-artefacts
+# note below):
 #   tag-validate -> python-metadata -> python-build (matrixed) ->
-#   { tests | audit (matrixed) | sbom -> grype (per-arch) }
-#     -> test-pypi -> pypi -> attach-artefacts -> promote-release
+#   { python-audit (matrixed) | sbom -> grype (per-arch) } ->
+#   python-tests -> attach-artefacts -> promote-release
 #
 # Each matrixed build/test/audit job runs on a 2-D matrix of architecture
 # (from the `runners` input) crossed with Python version (discovered by
-# the python-metadata job). The SBOM + Grype job runs per-arch only,
+# the python-metadata job). The SBOM and Grype jobs run per-arch only,
 # because native dependency trees differ per architecture but not per
 # Python version.
 #
@@ -603,11 +604,12 @@ jobs:
   # python-metadata to surface every failure on a PR.)
   python-tests:
     name: 'Tests ${{ matrix.target.arch }} py${{ matrix.python-version }}'
-    # Deferred until the audit operations (python-audit and the SBOM/Grype
-    # scan) pass, so the expensive test matrix is skipped on audit failure.
-    needs: ['python-metadata', 'python-build', 'python-audit', 'sbom']
+    # Deferred until the audit operations (python-audit and the SBOM ->
+    # Grype scan) pass, so the expensive test matrix is skipped on audit
+    # failure. Gating on grype transitively gates on sbom.
+    needs: ['python-metadata', 'python-build', 'python-audit', 'grype']
     # yamllint disable-line rule:line-length
-    if: ${{ !cancelled() && needs.python-build.result == 'success' && needs.python-audit.result == 'success' && needs.sbom.result == 'success' }}
+    if: ${{ !cancelled() && needs.python-build.result == 'success' && needs.python-audit.result == 'success' && needs.grype.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -867,7 +869,7 @@ jobs:
         with:
           path_prefix: ${{ inputs.path_prefix }}
           include_dev: ${{ inputs.sbom_include_dev }}
-          # The Grype audit below scans the JSON SBOM, so JSON must
+          # The Grype job scans the JSON SBOM, so JSON must
           # always exist. sbom_format is documented as 'json' or
           # 'both'; a stray, undocumented 'xml' is coerced to 'both'
           # because workflow_call inputs cannot enforce an enum.
@@ -894,6 +896,49 @@ jobs:
             echo "Tool used: ${{ steps.sbom.outputs.dependency_manager }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  grype:
+    name: 'Grype ${{ matrix.target.arch }}'
+    needs: 'sbom'
+    if: ${{ !cancelled() && needs.sbom.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(inputs.runners) }}
+    # Grype scans the architecture-independent CycloneDX JSON SBOM, so the
+    # per-arch scans all run on a standard x64 runner regardless of the
+    # target architecture that produced each SBOM.
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+      - name: 'Harden runner (block)'
+        if: inputs.harden_runner_egress != 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: 'Harden runner (audit)'
+        if: inputs.harden_runner_egress == 'audit'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Download SBOM (${{ matrix.target.arch }})'
+        # yamllint disable-line rule:line-length
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: sbom-files-${{ matrix.target.arch }}
+
       - name: 'Install Grype'
         id: grype
         # yamllint disable-line rule:line-length
@@ -914,7 +959,7 @@ jobs:
           NO_BLOCK_AUDIT_FAIL: ${{ inputs.grype_permit_fail || vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
         shell: bash
         run: |
-          # The audit scans the JSON CycloneDX SBOM, which the sbom step
+          # The audit scans the JSON CycloneDX SBOM, which the sbom job
           # always generates. Guard anyway so the step still emits a
           # summary (and honours grype_permit_fail) if it is missing.
           if [ ! -f sbom-cyclonedx.json ]; then
