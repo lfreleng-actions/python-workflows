@@ -22,7 +22,7 @@ every Python repository.
 | Workflow | Purpose | Trigger style |
 | -------- | ------- | ------------- |
 | `.github/workflows/build-test.yaml` | Single-arch build, test, audit, SBOM and Grype scan | Pull request |
-| `.github/workflows/build-test-release.yaml` | Single-arch pipeline plus tag validation, Test PyPI / PyPI publishing and release promotion | Tag push |
+| `.github/workflows/build-test-release.yaml` | Single-arch pipeline plus tag validation, release artefact attachment and draft-release promotion (the caller performs PyPI publishing) | Tag push |
 | `.github/workflows/build-test-multiarch.yaml` | Multi-architecture (x64 + arm64) variant with native build hooks for C-extension projects | Pull request |
 | `.github/workflows/build-test-release-multiarch.yaml` | Multi-architecture release variant | Tag push |
 
@@ -38,15 +38,36 @@ another, so a pull request surfaces every failure at once (jobs in
 python-build -> { python-tests | python-audit | sbom -> grype }
 ```
 
-The release variants wrap this with `tag-validate` up front and add a
-publishing chain at the end. They also **defer `python-tests` until
-`python-audit` and `grype` have both passed**, so a failing audit skips
-the expensive test matrix and never reaches publishing:
+The release variants wrap this with `tag-validate` up front and a
+release-promotion chain at the end. They also **defer `python-tests`
+until `python-audit` and `grype` have both passed**, so a failing audit
+skips the expensive test matrix and never reaches release promotion:
 
 ```text
 python-build -> { python-audit | sbom -> grype } -> python-tests
-  -> test-pypi -> pypi -> attach-artefacts -> promote-release
+  -> attach-artefacts -> promote-release
 ```
+
+### PyPI publishing is the caller's responsibility
+
+The release variants **do not** publish to PyPI. PyPI
+trusted publishing matches the OIDC `job_workflow_ref` claim against the
+*calling* repository, so a reusable workflow can never act as a
+trusted publisher (see the [PyPI docs][trusted-publishers]). To keep
+trusted publishing (and the PEP 740 attestations it enables), the caller
+must run the publish jobs itself, stacked **after** the reusable call:
+
+```text
+caller: release (reusable) -> test-pypi -> pypi
+```
+
+The reusable workflow exposes a `tag` output and leaves the run-scoped
+build artefact in place, so the caller's publish jobs have everything
+they need. See
+[`examples/build-test-release/`](examples/build-test-release/) for a
+complete caller.
+
+[trusted-publishers]: https://docs.pypi.org/trusted-publishers/
 
 The multi-arch variants add a `python-metadata` job and fan the build,
 test and audit jobs across an architecture matrix.

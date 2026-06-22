@@ -131,10 +131,11 @@ defaults each target to the consumer's default/HEAD branch.
 | `gerrit_refspec` / `gerrit_project` / `gerrit_branch` / `gerrit_url` | Gerrit-aware checkout | `''` |
 
 **`build-test-release.yaml`:** all of the above plus `attestations`
-(`true`), `sigstore_sign` (`true`), `pypi_environment` (`production`),
-and `test_pypi_environment` (`development`). The release tag is taken
-from the pushed tag (validated by `tag-validate`), not a workflow
-input. Release workflows do **not** carry `GERRIT_DISABLED` semantics.
+(`true`) and `sigstore_sign` (`true`). The release tag is taken from the
+pushed tag (validated by `tag-validate`), not a workflow input, and is
+re-exposed as the `tag` workflow output for the caller's publish jobs.
+Release workflows do **not** carry `GERRIT_DISABLED` semantics, do
+**not** publish to PyPI, and take no publishing secrets (see Q9).
 
 **`build-test-multiarch.yaml`:** standard set plus `runners` (JSON),
 `auditwheel` (`true`), `manylinux_version` (`manylinux_2_38`), `make`
@@ -253,7 +254,7 @@ Reuse the exact existing pins:
 
 ### Q9 — Release: environments, secrets, permissions
 
-**Decision:**
+**Decision (superseded — see amendment below):**
 
 - Environment names as inputs: `test_pypi_environment` (`development`),
   `pypi_environment` (`production`) — matches dependamerge.
@@ -262,6 +263,20 @@ Reuse the exact existing pins:
 - Release examples show callers mapping `secrets:` explicitly.
 - `id-token: write` is declared by the reusable workflow's pypi jobs; the
   required `permissions:` are documented in the example header.
+
+**Amendment — PyPI publishing moved to the caller.** PyPI trusted
+publishing matches the OIDC `job_workflow_ref` claim against the
+*calling* repository, so a reusable workflow can never act as a trusted
+publisher (PyPI docs; warehouse#11096). Keeping the publish step inside
+the reusable workflow forced static-token auth, which cannot produce the
+PEP 740 attestations we require. The reusable release workflows
+therefore stop at `attach-artefacts` -> `promote-release` and expose a
+`tag` output; the **caller** stacks its own `test-pypi`/`pypi` jobs
+after the reusable call, consuming the run-scoped build artefact. As a
+result the reusable workflows no longer take the `pypi_environment` /
+`test_pypi_environment` inputs or the `pypi_credential` /
+`test_pypi_credential` secrets. See the `examples/build-test-release*/`
+callers for the publish-job pattern.
 
 ### Q10 — Referencing the reusable workflows / pinning
 

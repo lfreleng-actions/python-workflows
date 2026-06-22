@@ -168,24 +168,11 @@ on:
         required: false
         type: boolean
         default: true
-      pypi_environment:
-        description: 'Deployment environment for the production PyPI release'
-        required: false
-        type: string
-        default: 'production'
-      test_pypi_environment:
-        description: 'Deployment environment for the Test PyPI publish'
-        required: false
-        type: string
-        default: 'development'
 
-    secrets:
-      pypi_credential:
-        description: 'PyPI publishing credential'
-        required: true
-      test_pypi_credential:
-        description: 'Test PyPI publishing credential'
-        required: true
+    outputs:
+      tag:
+        description: 'Validated release tag/version string'
+        value: ${{ jobs.tag-validate.outputs.tag }}
 
 permissions: {}
 
@@ -813,111 +800,22 @@ jobs:
             echo "Found ${match_count} matching Grype record(s)."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Publish to Test PyPI before the production release. Individual job
-  # re-runs are not supported; PyPI rejects duplicate uploads, preventing
-  # the release workflow from being re-runnable after success.
-  test-pypi:
-    name: 'Test PyPI Publishing'
-    runs-on: 'ubuntu-latest'
-    # python-tests already gates on python-audit and Grype, so depending on
-    # the full test matrix here is sufficient to order publishing last.
-    needs:
-      - 'tag-validate'
-      - 'python-tests'
-    environment:
-      name: ${{ inputs.test_pypi_environment }}
-    permissions:
-      contents: read
-      id-token: write  # IMPORTANT: mandatory for trusted publishing
-    timeout-minutes: 5
-    steps:
-      - name: 'Load egress allow-list (block mode)'
-        if: inputs.harden_runner_egress != 'audit'
-        # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
-        with:
-          config: ${{ inputs.harden_runner_allowlist }}
-      - name: 'Harden runner (block)'
-        if: inputs.harden_runner_egress != 'audit'
-        # yamllint disable-line rule:line-length
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
-        with:
-          egress-policy: 'block'
-          allowed-endpoints: >
-            ${{ env.CONNECTION_ALLOW_LIST }}
-      - name: 'Harden runner (audit)'
-        if: inputs.harden_runner_egress == 'audit'
-        # yamllint disable-line rule:line-length
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
-        with:
-          egress-policy: 'audit'
-
-      - name: 'Test PyPI publishing'
-        # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/pypi-publish-action@f07400a2b57119f1ceac420f559803264b491f23  # v0.1.6
-        with:
-          environment: ${{ inputs.test_pypi_environment }}
-          tag: ${{ needs.tag-validate.outputs.tag }}
-          pypi_credential: ${{ secrets.test_pypi_credential }}
-
-  pypi:
-    name: 'Release PyPI Package'
-    runs-on: 'ubuntu-latest'
-    needs:
-      - 'tag-validate'
-      - 'test-pypi'
-    environment:
-      name: ${{ inputs.pypi_environment }}
-    permissions:
-      contents: read
-      id-token: write  # IMPORTANT: mandatory for trusted publishing
-    timeout-minutes: 5
-    steps:
-      - name: 'Load egress allow-list (block mode)'
-        if: inputs.harden_runner_egress != 'audit'
-        # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
-        with:
-          config: ${{ inputs.harden_runner_allowlist }}
-      - name: 'Harden runner (block)'
-        if: inputs.harden_runner_egress != 'audit'
-        # yamllint disable-line rule:line-length
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
-        with:
-          egress-policy: 'block'
-          allowed-endpoints: >
-            ${{ env.CONNECTION_ALLOW_LIST }}
-      - name: 'Harden runner (audit)'
-        if: inputs.harden_runner_egress == 'audit'
-        # yamllint disable-line rule:line-length
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
-        with:
-          egress-policy: 'audit'
-
-      - name: 'PyPI release'
-        # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/pypi-publish-action@f07400a2b57119f1ceac420f559803264b491f23  # v0.1.6
-        with:
-          environment: ${{ inputs.pypi_environment }}
-          attestations: ${{ inputs.attestations }}
-          tag: ${{ needs.tag-validate.outputs.tag }}
-          pypi_credential: ${{ secrets.pypi_credential }}
-
   # Attach build artefacts prior to release promotion
   # This enables the GitHub immutable releases feature
   #
-  # NOTE: This job does NOT need an isDraft guard for full workflow
-  # re-runs. If the workflow is re-run after a release has already been
-  # promoted (immutable), the earlier PyPI publishing steps will fail
-  # first (PyPI rejects duplicate uploads), so this job will never be
-  # reached. Individual job re-runs are not supported for this workflow.
+  # NOTE: PyPI publishing is intentionally NOT performed by this reusable
+  # workflow. Trusted publishing matches the OIDC job_workflow_ref claim
+  # against the calling repository, so the caller MUST run the publish
+  # steps itself. This workflow stops at promoting the GitHub release; the
+  # caller stacks the Test PyPI/PyPI publish jobs after it, consuming the
+  # run-scoped build artefact and the workflow's 'tag' output.
   attach-artefacts:
     name: 'Attach Artefacts to Release'
     runs-on: 'ubuntu-latest'
     needs:
       - 'tag-validate'
       - 'python-build'
-      - 'pypi'
+      - 'python-tests'
     permissions:
       contents: write  # IMPORTANT: needed to edit release, attach artefacts
     timeout-minutes: 5

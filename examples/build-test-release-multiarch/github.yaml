@@ -15,10 +15,16 @@
 # use the gerrit.yaml example in this directory instead.
 #
 # The multi-arch release pipeline fans the build/test/audit jobs out across
-# an architecture matrix (x64 + arm64 by default) and publishes to Test PyPI
-# then PyPI, so the caller MUST map the two publishing credentials through
-# the `secrets:` block below. Native build prerequisites are supplied via
-# the optional `setup_script` hook.
+# an architecture matrix (x64 + arm64 by default). Native build
+# prerequisites are supplied via the optional `setup_script` hook.
+#
+# PyPI PUBLISHING IS PERFORMED HERE, NOT IN THE REUSABLE WORKFLOW.
+# PyPI trusted publishing matches the OIDC job_workflow_ref claim against
+# THIS repository, so a reusable workflow can never be a trusted publisher.
+# The reusable `release` job builds, tests, audits, attaches artefacts and
+# promotes the draft release; the `test-pypi` and `pypi` jobs below then
+# publish the run-scoped 'dist-*' build artefacts it produced. Configure a
+# PyPI trusted publisher for this repository's workflow + environment first.
 # =============================================================================
 name: 'Python Build/Test/Release (Multi-Arch)'
 
@@ -34,12 +40,18 @@ concurrency:
 
 permissions: {}
 
+env:
+  # Harden-runner egress allow-list shared by the publish jobs. Matches the
+  # default used inside the reusable workflow; override for your project.
+  # yamllint disable-line rule:line-length
+  HARDEN_RUNNER_ALLOWLIST: 'lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@18d9c4446bea555d0783e850f6d295f844fe8f67'  # v0.1.1
+
 jobs:
   release:
     name: 'Build/Test/Release'
     permissions:
       contents: write       # Create the GitHub release / attach assets
-      id-token: write       # OIDC for PyPI trusted publishing
+      id-token: write       # OIDC for build provenance attestations
       attestations: write   # Build provenance attestations
     # REPLACE the pinned SHA below with a python-workflows release SHA.
     # The all-zero SHA is a non-functional placeholder, NOT a real commit.
@@ -51,8 +63,6 @@ jobs:
     #   path_prefix: '.'              # project root (monorepo subdir, etc.)
     #   attestations: true            # build provenance attestations
     #   sigstore_sign: true           # Sigstore-sign build artefacts
-    #   pypi_environment: 'production'        # production PyPI environment
-    #   test_pypi_environment: 'development'  # Test PyPI environment
     #   # --- Multi-arch inputs ---
     #   # JSON array of {runner, arch} objects defining the arch matrix:
     # yamllint disable-line rule:line-length
@@ -63,7 +73,79 @@ jobs:
     #   make_args: ''                 # arguments passed to make-action
     #   setup_script: '.github/scripts/setup-nss.sh'  # native prereqs hook
     #   ld_library_path: ''           # LD_LIBRARY_PATH for the test step
-    # The two publishing credentials are REQUIRED by the reusable workflow.
-    secrets:
-      pypi_credential: ${{ secrets.PYPI_CREDENTIAL }}
-      test_pypi_credential: ${{ secrets.TEST_PYPI_CREDENTIAL }}
+
+  # ---------------------------------------------------------------------------
+  # PyPI publishing — runs in THIS repository so trusted publishing works.
+  # The multi-arch build produces several 'dist-*' artefacts, so the publish
+  # jobs download them with `artefact_pattern` and merge before upload.
+  # ---------------------------------------------------------------------------
+  test-pypi:
+    name: 'Test PyPI Publishing'
+    needs: release
+    runs-on: 'ubuntu-latest'
+    # MUST match the environment configured on the Test PyPI trusted publisher.
+    environment:
+      name: development
+    permissions:
+      contents: read
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+    timeout-minutes: 5
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ env.HARDEN_RUNNER_ALLOWLIST }}
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: 'Test PyPI publishing'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/pypi-publish-action@f07400a2b57119f1ceac420f559803264b491f23  # v0.1.6
+        with:
+          environment: development
+          tag: ${{ needs.release.outputs.tag }}
+          artefact_pattern: 'dist-*'
+          trusted_publishing: 'true'
+
+  pypi:
+    name: 'Release PyPI Package'
+    needs:
+      - release
+      - test-pypi
+    runs-on: 'ubuntu-latest'
+    # MUST match the environment configured on the PyPI trusted publisher.
+    environment:
+      name: production
+    permissions:
+      contents: read
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+    timeout-minutes: 5
+    steps:
+      - name: 'Load egress allow-list (block mode)'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        with:
+          config: ${{ env.HARDEN_RUNNER_ALLOWLIST }}
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: 'PyPI release'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/pypi-publish-action@f07400a2b57119f1ceac420f559803264b491f23  # v0.1.6
+        with:
+          environment: production
+          tag: ${{ needs.release.outputs.tag }}
+          artefact_pattern: 'dist-*'
+          trusted_publishing: 'true'
+          attestations: true
