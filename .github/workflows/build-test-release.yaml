@@ -265,6 +265,7 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: 'Gather repository metadata'
         id: repo-metadata
@@ -328,6 +329,7 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
 
       - name: 'Verify pushed tag'
         id: 'tag-validate'
@@ -423,6 +425,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Build Python project'
         id: python-build
@@ -492,6 +495,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Python tests [pytest] ${{ matrix.python-version }}'
         # yamllint disable-line rule:line-length
@@ -557,6 +561,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Audit dependencies ${{ matrix.python-version }}'
         # yamllint disable-line rule:line-length
@@ -617,6 +622,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Generate SBOM'
         id: sbom
@@ -861,6 +867,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: '⬇ Download build artefacts'
         # yamllint disable-line rule:line-length
@@ -928,6 +935,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Check if release is already promoted'
         id: 'check-promoted'

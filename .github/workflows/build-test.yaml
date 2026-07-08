@@ -203,7 +203,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read  # Gather repository/PR metadata
     timeout-minutes: 5
     steps:
       - name: 'Load egress allow-list (block mode)'
@@ -246,6 +246,7 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: 'Gather repository metadata'
         id: repo-metadata
@@ -309,6 +310,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Build Python project'
         id: python-build
@@ -370,6 +372,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Python tests [pytest] ${{ matrix.python-version }}'
         # yamllint disable-line rule:line-length
@@ -435,6 +438,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Audit dependencies ${{ matrix.python-version }}'
         # yamllint disable-line rule:line-length
@@ -495,6 +499,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Generate SBOM'
         id: sbom

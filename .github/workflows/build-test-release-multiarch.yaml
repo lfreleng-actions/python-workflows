@@ -323,6 +323,7 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: 'Gather repository metadata'
         id: repo-metadata
@@ -386,6 +387,7 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
 
       - name: 'Verify pushed tag'
         id: 'tag-validate'
@@ -476,6 +478,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Extract Python project metadata'
         id: metadata
@@ -558,6 +561,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Validate setup script path'
         if: inputs.setup_script != ''
@@ -660,6 +664,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Validate setup script path'
         if: inputs.setup_script != ''
@@ -753,6 +758,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Validate setup script path'
         if: inputs.setup_script != ''
@@ -840,6 +846,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Validate setup script path'
         if: inputs.setup_script != ''
@@ -888,10 +895,12 @@ jobs:
 
       - name: 'SBOM summary'
         shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.target.arch }}
         run: |
           # SBOM summary
           {
-            echo "## SBOM Summary (${{ matrix.target.arch }})"
+            echo "## SBOM Summary ($TARGET_ARCH)"
             echo "SBOM count: ${{ steps.sbom.outputs.component_count }}"
             echo "Tool used: ${{ steps.sbom.outputs.dependency_manager }}"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -1034,10 +1043,12 @@ jobs:
       - name: 'Grype summary'
         if: always()
         shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.target.arch }}
         run: |
           # Render a Markdown summary of the Grype findings
           {
-            echo "## Grype Vulnerability Scan (${{ matrix.target.arch }})"
+            echo "## Grype Vulnerability Scan ($TARGET_ARCH)"
             echo ""
             if [ ! -f grype-results.json ]; then
               echo "No scan results available"
@@ -1117,6 +1128,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: '⬇ Download build artefacts'
         # yamllint disable-line rule:line-length
@@ -1185,6 +1197,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: 'Check if release is already promoted'
         id: 'check-promoted'
