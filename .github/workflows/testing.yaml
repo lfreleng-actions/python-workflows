@@ -39,7 +39,7 @@ jobs:
           - lfreleng-actions/lftools-uv
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read  # Reusable workflow reads PR metadata
     uses: ./.github/workflows/build-test.yaml
     with:
       repository: ${{ matrix.repository }}
@@ -53,7 +53,7 @@ jobs:
     name: 'Multi-Arch'
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read  # Reusable workflow reads PR metadata
     uses: ./.github/workflows/build-test-multiarch.yaml
     with:
       repository: lfreleng-actions/python-nss-ng
