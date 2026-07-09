@@ -371,7 +371,7 @@ jobs:
       - name: 'Extract Python project metadata'
         id: metadata
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/build-metadata-action@ed0cc5bcf3a7ddd4e40058c46fc4211eb71b7f86  # v0.5.0
+        uses: lfreleng-actions/build-metadata-action@441d941775995fa0d562ee80b4cc6ed1230248ec  # v0.6.0
         with:
           path_prefix: ${{ inputs.path_prefix }}
           output_format: summary
