@@ -649,12 +649,15 @@ jobs:
 
       - name: 'SBOM summary'
         shell: bash
+        env:
+          SBOM_COMPONENT_COUNT: ${{ steps.sbom.outputs.component_count }}
+          SBOM_DEPENDENCY_MANAGER: ${{ steps.sbom.outputs.dependency_manager }}
         run: |
           # SBOM summary
           {
             echo "## SBOM Summary"
-            echo "SBOM count: ${{ steps.sbom.outputs.component_count }}"
-            echo "Tool used: ${{ steps.sbom.outputs.dependency_manager }}"
+            echo "SBOM count: ${SBOM_COMPONENT_COUNT}"
+            echo "Tool used: ${SBOM_DEPENDENCY_MANAGER}"
           } >> "$GITHUB_STEP_SUMMARY"
 
   grype:
