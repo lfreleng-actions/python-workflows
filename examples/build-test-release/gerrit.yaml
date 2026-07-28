@@ -43,7 +43,7 @@ env:
   # Harden-runner egress allow-list shared by the publish jobs. Matches the
   # default used inside the reusable workflow; override for your project.
   # yamllint disable-line rule:line-length
-  HARDEN_RUNNER_ALLOWLIST: 'lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@18d9c4446bea555d0783e850f6d295f844fe8f67'  # v0.1.1
+  HARDEN_RUNNER_ALLOWLIST: 'lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@60d8d71016f31c26775e5ec9380eba4264aa6f9e'  # v0.12.1
 
 jobs:
   release:
