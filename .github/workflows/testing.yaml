@@ -17,7 +17,12 @@ name: 'Testing 🧪'
 
 # yamllint disable-line rule:truthy
 on:
-  workflow_dispatch:
+  # No workflow_dispatch: a manual run happens on the default branch,
+  # which would hand this job a cache token with write access to the
+  # default-branch scope while it builds and tests third-party
+  # consumer repositories. Untrusted code from those repositories
+  # could then poison caches that later runs restore (CWE-349).
+  # Pull request runs write only to their own cache scope.
   pull_request:
     branches: ['main']
 
