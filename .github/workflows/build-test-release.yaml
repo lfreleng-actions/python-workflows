@@ -368,6 +368,7 @@ jobs:
           # yamllint disable-line rule:line-length
           gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
           delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
           ref: refs/heads/${{ inputs.gerrit_branch }}
       - name: 'Checkout repository'
         if: inputs.gerrit_refspec == ''
@@ -424,6 +425,7 @@ jobs:
           # yamllint disable-line rule:line-length
           gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
           delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
           ref: refs/heads/${{ inputs.gerrit_branch }}
       - name: 'Checkout repository'
         if: inputs.gerrit_refspec == ''
@@ -526,6 +528,7 @@ jobs:
           # yamllint disable-line rule:line-length
           gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
           delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
           ref: refs/heads/${{ inputs.gerrit_branch }}
       - name: 'Checkout repository'
         if: inputs.gerrit_refspec == ''
@@ -593,6 +596,7 @@ jobs:
           # yamllint disable-line rule:line-length
           gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
           delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
           ref: refs/heads/${{ inputs.gerrit_branch }}
       - name: 'Checkout repository'
         if: inputs.gerrit_refspec == ''
@@ -663,6 +667,7 @@ jobs:
           # yamllint disable-line rule:line-length
           gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
           delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
           ref: refs/heads/${{ inputs.gerrit_branch }}
       - name: 'Checkout repository'
         if: inputs.gerrit_refspec == ''
@@ -718,6 +723,7 @@ jobs:
           # yamllint disable-line rule:line-length
           gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
           delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
           ref: refs/heads/${{ inputs.gerrit_branch }}
       - name: 'Checkout repository'
         if: inputs.gerrit_refspec == ''
@@ -961,6 +967,7 @@ jobs:
           # yamllint disable-line rule:line-length
           gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
           delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
           ref: refs/heads/${{ inputs.gerrit_branch }}
       - name: 'Checkout repository'
         if: inputs.gerrit_refspec == ''
@@ -1022,6 +1029,7 @@ jobs:
           # yamllint disable-line rule:line-length
           gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
           delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
           ref: refs/heads/${{ inputs.gerrit_branch }}
       - name: 'Checkout repository'
         if: inputs.gerrit_refspec == ''
