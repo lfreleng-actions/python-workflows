@@ -45,6 +45,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read  # Reusable workflow reads PR metadata
+      issues: read  # Grype scan reads approved CVE bypass issues
     uses: ./.github/workflows/build-test.yaml
     with:
       repository: ${{ matrix.repository }}
@@ -59,6 +60,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read  # Reusable workflow reads PR metadata
+      issues: read  # Grype scan reads approved CVE bypass issues
     uses: ./.github/workflows/build-test-multiarch.yaml
     with:
       repository: lfreleng-actions/python-nss-ng
