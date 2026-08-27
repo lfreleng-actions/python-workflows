@@ -693,7 +693,7 @@ jobs:
       - name: 'Build Python project ${{ matrix.python-version }}'
         id: python-build
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-build-action@97cf36d2a5914c94761408545d154c983024de1d  # v2.0.0
+        uses: lfreleng-actions/python-build-action@1a1d011cd71e781f9b7896fc9a8c5653406a7758  # v2.1.0
         with:
           # yamllint disable-line rule:line-length
           artefact_name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
