@@ -168,8 +168,9 @@ on:
       # --- SBOM ---
       sbom_enabled:
         description: >-
-          Generate an SBOM (set false to skip; also skips the
-          dependent Grype scan)
+          Generate an SBOM (set false to skip). The Grype scan
+          reads the SBOM, so skipping generation leaves it nothing to
+          scan. To keep the SBOM but drop the scan, use grype_enabled.
         required: false
         type: boolean
         default: true
@@ -185,6 +186,15 @@ on:
         default: 'both'
 
       # --- Grype scan ---
+      grype_enabled:
+        description: >-
+          Run the Grype vulnerability scan over the generated SBOM (set
+          false to skip). Decoupling is one-way: disabling the scan
+          keeps the SBOM, but disabling the SBOM also stops the scan,
+          which has nothing to read.
+        required: false
+        type: boolean
+        default: true
       grype_fail_on:
         description: 'Minimum severity that fails the Grype scan'
         required: false
@@ -908,6 +918,7 @@ jobs:
       # dependencies.
       - name: 'Grype audit SBOM'
         id: grype-audit
+        if: ${{ inputs.grype_enabled }}
         # yamllint disable-line rule:line-length
         uses: lfreleng-actions/grype-scan-action@87fd7bdad7f0809af58108e65f60debc244df348  # v0.0.2
         with:
