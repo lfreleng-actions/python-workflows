@@ -52,5 +52,7 @@ jobs:
     #   test_permit_fail: false       # soft-fail tests
     #   audit_permit_fail: false      # soft-fail dependency audit
     #   sbom_include_dev: false       # include dev deps in the SBOM
+    #   sbom_enabled: true            # false skips SBOM generation
+    #   grype_enabled: true           # false skips the Grype scan only
     #   grype_fail_on: 'medium'       # Grype severity gate
     #   harden_runner_egress: 'block' # 'block' (default) or 'audit'
