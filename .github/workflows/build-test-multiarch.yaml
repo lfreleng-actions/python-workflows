@@ -814,7 +814,6 @@ jobs:
     runs-on: ${{ matrix.target.runner }}
     permissions:
       contents: read
-      issues: read  # Read maintainer-approved CVE bypass issues
     timeout-minutes: ${{ inputs.audit_timeout_minutes }}
     steps:
       - name: 'Load egress allow-list'
