@@ -19,12 +19,12 @@ every Python repository.
 
 <!-- markdownlint-disable MD013 -->
 
-| Workflow | Purpose | Trigger style |
-| -------- | ------- | ------------- |
-| `.github/workflows/build-test.yaml` | Single-arch build, test, audit, SBOM and Grype scan | Pull request |
-| `.github/workflows/build-test-release.yaml` | Single-arch pipeline plus tag validation, release artefact attachment and draft-release promotion (the caller performs PyPI publishing) | Tag push |
-| `.github/workflows/build-test-multiarch.yaml` | Multi-architecture (x64 + arm64) variant with native build hooks for C-extension projects | Pull request |
-| `.github/workflows/build-test-release-multiarch.yaml` | Multi-architecture release variant | Tag push |
+| Workflow                                              | Purpose                                                                                                                                 | Trigger style |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `.github/workflows/build-test.yaml`                   | Single-arch build, test, audit, SBOM/Grype scan and CBOM                                                                                | Pull request  |
+| `.github/workflows/build-test-release.yaml`           | Single-arch pipeline plus tag validation, release artefact attachment and draft-release promotion (the caller performs PyPI publishing) | Tag push      |
+| `.github/workflows/build-test-multiarch.yaml`         | Multi-architecture (x64 + arm64) variant with native build hooks for C-extension projects                                               | Pull request  |
+| `.github/workflows/build-test-release-multiarch.yaml` | Multi-architecture release variant                                                                                                      | Tag push      |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -35,7 +35,7 @@ another, so a pull request surfaces every failure at once (jobs in
 `{ }` run concurrently; `->` denotes sequence):
 
 ```text
-python-build -> { python-tests | python-audit | sbom -> grype }
+python-build -> { python-tests | python-audit | sbom -> grype | cbom }
 ```
 
 The release variants wrap this with `tag-validate` up front and a
@@ -46,6 +46,7 @@ skips the expensive test matrix and never reaches release promotion:
 ```text
 python-build -> { python-audit | sbom -> grype } -> python-tests
   -> attach-artefacts -> promote-release
+python-build -> cbom
 ```
 
 ### PyPI publishing is the caller's responsibility
@@ -71,6 +72,64 @@ complete caller.
 
 The multi-arch variants add a `python-metadata` job and fan the build,
 test and audit jobs across an architecture matrix.
+
+### CBOM (informational)
+
+The `cbom` job runs `cbom-action` to produce a CycloneDX Cryptography
+Bill of Materials: the algorithms, key sizes, modes, protocols and
+certificates the code actually calls. An SBOM cannot express that, and
+a CBOM is what post-quantum readiness assessments read. For Python the
+scanner covers the `pyca/cryptography` library.
+
+**It never fails the workflow run.** The job sets `continue-on-error`
+and pins the action's `fail_on_error` to `false`, so a scanner error, a
+rejected input, or the job timeout all leave the run green. That covers
+the whole leg on purpose — there is no `cbom_permit_fail` input,
+because the report is advisory by contract rather than by configuration.
+Set `cbom_enabled: false` to drop the job entirely.
+
+It runs in parallel with the test, audit and SBOM legs and gates
+nothing, so it never delays another job. The run as a whole still waits
+for it, as it does for every job, so a scan that outlasts every other
+branch extends the total; `cbom_timeout_minutes` bounds that. In the
+self-test it takes 46–55 seconds, well inside the build.
+`needs: python-build` orders it after the build; it does its own
+checkout and reads no build output. In the release variants it stays
+outside the gating inversion: it neither gates `python-tests` nor joins
+the release assets, because a job permitted to fail would attach its
+output at random.
+
+The multi-arch variants do **not** fan this job across the matrix. That
+matrix exists because installed dependency trees differ by architecture
+and Python version; a CBOM scan reads the source tree statically and
+sees the same bytes on every cell. One run on `ubuntu-latest` produces
+one `cbom-files` artefact, retained for 45 days like the SBOM.
+
+<!-- markdownlint-disable MD013 -->
+
+| Name                   | Type    | Default | Description                                                                              |
+| ---------------------- | ------- | ------- | ---------------------------------------------------------------------------------------- |
+| `cbom_enabled`         | boolean | `true`  | Generate a CBOM (set false to skip the job)                                              |
+| `cbom_languages`       | string  | `''`    | Comma-separated languages to scan (`java`, `python`, `go`, `csharp`); empty auto-detects |
+| `cbom_exclude`         | string  | `''`    | Comma-separated Java regex patterns to exclude; empty skips test sources                 |
+| `cbom_module_cboms`    | boolean | `true`  | Emit a per-module CBOM alongside the consolidated one                                    |
+| `cbom_empty_cboms`     | boolean | `true`  | Write CBOM files even when the scan finds no cryptographic assets                        |
+| `cbom_timeout_minutes` | number  | `15`    | Timeout for the CBOM job; covers the container image pull as well as the scan            |
+
+<!-- markdownlint-enable MD013 -->
+
+The scanner image is a digest pinned inside `cbom-action`, so it moves
+when the action pin moves rather than through a workflow input. The job
+writes reports under `RUNNER_TEMP`, never the workspace, so a project
+that tracks its own `cbom.json` keeps it.
+
+**Known limitation.** The CBOM's metadata block (repository URL, branch,
+commit) comes from the workflow run's own context, so it names the
+*calling* repository and commit. Where `repository` or `ref` points at a
+different tree, and on a Gerrit-sourced run where the checked-out change
+is not the mirror commit, that metadata describes the caller rather than
+the source scanned. This does not touch the cryptographic findings themselves.
+Fixing it needs explicit metadata inputs on `cbom-action`.
 
 ## Usage
 
@@ -109,7 +168,8 @@ jobs:
 All inputs are optional and default to the canonical behaviour; see the
 `inputs:` block at the top of each workflow file for the full, documented
 list (project layout, matrix override, tox, pytest, audit allow-lists, SBOM
-options, Grype severity gate, runner hardening, and Gerrit-aware checkout).
+options, Grype severity gate, CBOM options, runner hardening, and
+Gerrit-aware checkout).
 
 ## Gerrit support
 
