@@ -282,8 +282,13 @@ callers for the publish-job pattern.
 
 **Decision:**
 
-- `testing.yaml` references the reusable workflows by **local path**
-  (`uses: ./.github/workflows/build-test.yaml`) — already standard practice.
+- `testing.yaml` references the reusable workflows by
+  **self-repository path**
+  (`uses: $/.github/workflows/build-test.yaml`), which resolves this
+  repository at the commit already running. GitHub added the form in
+  July 2026 and recommends it for a workflow in the same repository;
+  it replaced the `./` path this brief first recorded, which resolves
+  identically.
 - `examples/` reference a **non-functional placeholder commit SHA** with a
   `# vX.Y.Z` comment and replace-me instructions (keeps GitHub Copilot's
   pin checks satisfied and teaches the SHA-pinning convention).
