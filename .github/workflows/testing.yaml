@@ -9,8 +9,10 @@
 #   * lftools-uv    (standard single-arch) -> build-test.yaml
 #   * python-nss-ng (multi-arch C build)   -> build-test-multiarch.yaml
 #
-# The reusable workflows are referenced by LOCAL path so this always
-# validates the current branch's workflows. The standard targets are
+# The reusable workflows are referenced with the self-repository form
+# ('$/'), which resolves this repository at the commit already
+# running, so the workflows under test are always the ones this
+# branch defines. The standard targets are
 # checked out at their default/HEAD branch; the python-nss-ng leg is
 # pinned to the v1.2.0 release commit (see ref: below).
 name: 'Testing 🧪'
@@ -45,7 +47,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read  # Reusable workflow reads PR metadata
-    uses: ./.github/workflows/build-test.yaml
+    uses: $/.github/workflows/build-test.yaml
     with:
       repository: ${{ matrix.repository }}
 
@@ -59,7 +61,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read  # Reusable workflow reads PR metadata
-    uses: ./.github/workflows/build-test-multiarch.yaml
+    uses: $/.github/workflows/build-test-multiarch.yaml
     with:
       repository: lfreleng-actions/python-nss-ng
       ref: e6e197516189faac861f191a6a48f0e1d993ef3d  # v1.2.0
