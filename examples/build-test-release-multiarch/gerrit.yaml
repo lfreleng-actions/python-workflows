@@ -47,7 +47,7 @@ env:
   # Harden-runner egress allow-list shared by the publish jobs. Matches the
   # default used inside the reusable workflow; override for your project.
   # yamllint disable-line rule:line-length
-  HARDEN_RUNNER_ALLOWLIST: 'lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@ec0736244fc776e326283c6af6840e30f316f63c'  # v0.16.1
+  HARDEN_RUNNER_ALLOWLIST: 'lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@e0e35011ee145321a51d3226f044ec88dfe645b1'  # v0.16.4
 
 jobs:
   release:
@@ -88,12 +88,12 @@ jobs:
     steps:
       - name: 'Load egress allow-list (block mode)'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        uses: lfreleng-actions/harden-runner-block-action@a32eb064a1188f6b0f15d2c0c0381efe54b0dd22  # v0.12.2
         with:
           config: ${{ env.HARDEN_RUNNER_ALLOWLIST }}
       - name: 'Harden runner (block)'
         # yamllint disable-line rule:line-length
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: 'block'
           allowed-endpoints: >
@@ -101,7 +101,7 @@ jobs:
 
       - name: 'Test PyPI publishing'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/pypi-publish-action@f07400a2b57119f1ceac420f559803264b491f23  # v0.1.6
+        uses: lfreleng-actions/pypi-publish-action@276603f5d72b11427755ef139c6fb80489cec5d9  # v0.2.0
         with:
           environment: development
           tag: ${{ needs.release.outputs.tag }}
@@ -124,13 +124,13 @@ jobs:
     steps:
       - name: 'Load egress allow-list (block mode)'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
+        uses: lfreleng-actions/harden-runner-block-action@a32eb064a1188f6b0f15d2c0c0381efe54b0dd22  # v0.12.2
         with:
           config: ${{ env.HARDEN_RUNNER_ALLOWLIST }}
           allow_list_summary: 'false'
       - name: 'Harden runner (block)'
         # yamllint disable-line rule:line-length
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: 'block'
           allowed-endpoints: >
@@ -138,7 +138,7 @@ jobs:
 
       - name: 'PyPI release'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/pypi-publish-action@f07400a2b57119f1ceac420f559803264b491f23  # v0.1.6
+        uses: lfreleng-actions/pypi-publish-action@276603f5d72b11427755ef139c6fb80489cec5d9  # v0.2.0
         with:
           environment: production
           tag: ${{ needs.release.outputs.tag }}
