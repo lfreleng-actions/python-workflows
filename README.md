@@ -181,6 +181,98 @@ gated by a `GERRIT_DISABLED` toggle on the build-test workflows so they can
 also run manually from the GitHub UI. See the `gerrit.yaml` examples for the
 full pattern.
 
+## Verifying release artefacts
+
+With the `attestations` and `sigstore_sign` inputs at their default of
+`true`, the release workflows attest every wheel and sdist with SLSA
+build provenance and sign each one with Sigstore. They attach the
+artefacts to the GitHub release, each with its `<file>.sigstore.json`
+bundle. Both steps run inside this reusable workflow, so the Sigstore
+certificate behind each one names the reusable workflow as the signer.
+The calling run's repository and tag appear in the GitHub extensions
+of the certificate, not in its identity:
+
+<!-- markdownlint-disable MD013 -->
+
+| Certificate field                             | Binds                                       | Value                                                                                     |
+| --------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Subject Alternative Name (identity)           | This workflow, at the ref the caller pinned | `https://github.com/lfreleng-actions/python-workflows/.github/workflows/<workflow>@<ref>` |
+| GitHub Workflow Repository                    | The calling repository                      | `<owner>/<repo>`                                                                          |
+| GitHub Workflow Ref and Source Repository Ref | The tag the caller ran on                   | `refs/tags/<tag>`                                                                         |
+| GitHub Workflow Trigger                       | The triggering event                        | `push`                                                                                    |
+
+<!-- markdownlint-enable MD013 -->
+
+`<workflow>` is the release workflow the caller uses:
+`build-test-release.yaml` or `build-test-release-multiarch.yaml`. Name
+the right one in the commands below, because each rejects artefacts the
+other signed. `<ref>` is whatever follows `@` in the caller's `uses:`
+line, typically a python-workflows commit SHA. Check the identity and
+the extensions together: the identity alone accepts an artefact that
+any project released through this workflow, and the extensions alone
+accept one from any workflow that ran on that tag.
+
+The extensions describe the calling run, not the checkout. The
+`repository`, `ref` and `gerrit_refspec` inputs can point the build at
+other source, so the extensions identify the packaged source when the
+caller leaves all three empty, as the examples do, and not otherwise.
+
+Verify the build provenance attestation of each file with GitHub CLI
+v2.102.0 or later; earlier releases matched `--signer-workflow` as a
+prefix ([GHSA-wjmr-j3rp-mh2g]) and `--source-ref` without regard to
+case ([GHSA-4mq3-hpgx-9cx8]). `--signer-workflow` is mandatory: without
+it `gh` expects a signer in the project repository and rejects every
+release:
+
+<!-- markdownlint-disable MD013 -->
+
+```shell
+gh attestation verify <dist-file> \
+  --repo <owner>/<repo> \
+  --signer-workflow lfreleng-actions/python-workflows/.github/workflows/build-test-release.yaml \
+  --source-ref refs/tags/<tag>
+```
+
+<!-- markdownlint-enable MD013 -->
+
+Verify each Sigstore signature bundle with cosign v3 or later. The
+workflows emit v0.3 Sigstore bundles, which cosign v2.2 cannot read:
+
+<!-- markdownlint-disable MD013 -->
+
+```shell
+cosign verify-blob \
+  --bundle <dist-file>.sigstore.json \
+  --certificate-identity-regexp \
+  '^https://github\.com/lfreleng-actions/python-workflows/\.github/workflows/build-test-release\.yaml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-github-workflow-repository <owner>/<repo> \
+  --certificate-github-workflow-ref refs/tags/<tag> \
+  --certificate-github-workflow-trigger push \
+  <dist-file>
+```
+
+<!-- markdownlint-enable MD013 -->
+
+For a multi-arch release, replace `build-test-release.yaml` with
+`build-test-release-multiarch.yaml` in both commands, and in the regular
+expression write it as `build-test-release-multiarch\.yaml@`.
+
+Both commands accept any revision of the workflow. To pin the revision
+as well, take the commit SHA from the project's caller at the release
+tag, add `--signer-digest <sha>` to the `gh` command, and replace
+cosign's `--certificate-identity-regexp` with `--certificate-identity`
+and the full SAN ending in `@<sha>`.
+
+These checks cover the files attached to the GitHub release. The PEP
+740 attestations that PyPI serves come from the caller's own publish
+job (see
+[PyPI publishing is the caller's responsibility](#pypi-publishing-is-the-callers-responsibility)),
+and name the caller's workflow, not this one.
+
+[GHSA-wjmr-j3rp-mh2g]: https://github.com/cli/cli/security/advisories/GHSA-wjmr-j3rp-mh2g
+[GHSA-4mq3-hpgx-9cx8]: https://github.com/cli/cli/security/advisories/GHSA-4mq3-hpgx-9cx8
+
 ## Testing
 
 [`.github/workflows/testing.yaml`](.github/workflows/testing.yaml) exercises
