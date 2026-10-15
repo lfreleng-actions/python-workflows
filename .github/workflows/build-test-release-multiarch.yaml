@@ -887,7 +887,7 @@ jobs:
       - name: 'Upload test artefacts'
         if: ${{ !cancelled() && inputs.test_artifact_path != '' }}
         # yamllint disable-line rule:line-length
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           # yamllint disable-line rule:line-length
           name: python-test-results-${{ matrix.target.arch }}-py${{ matrix.python-version }}
@@ -1068,7 +1068,7 @@ jobs:
 
       - name: 'Upload SBOM artifacts'
         # yamllint disable-line rule:line-length
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: sbom-files-${{ matrix.target.arch }}
           # Glob matches whichever SBOM formats sbom_format produced
@@ -1277,7 +1277,7 @@ jobs:
       - name: 'Upload CBOM artifacts'
         if: ${{ steps.cbom.outputs.file_count != '0' }}
         # yamllint disable-line rule:line-length
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           # Unsuffixed, unlike the per-arch SBOM artefacts: one scan,
           # one artefact.
