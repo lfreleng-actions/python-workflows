@@ -449,6 +449,8 @@ jobs:
     runs-on: 'ubuntu-latest'
     outputs:
       matrix_json: ${{ steps.python-build.outputs.matrix_json }}
+      # yamllint disable-line rule:line-length
+      build_python_version: ${{ steps.python-build.outputs.build_python_version }}
       artefact_name: ${{ steps.python-build.outputs.artefact_name }}
       artefact_path: ${{ steps.python-build.outputs.artefact_path }}
     permissions:
@@ -691,8 +693,19 @@ jobs:
       - name: 'Generate SBOM'
         id: sbom
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-sbom-action@a849d7190403165d437f2b8d29bc17a4894728f7  # v0.1.3
+        uses: lfreleng-actions/sbom-action@73cdda97132f74a64733b238747d34151444da15  # v0.7.0
         with:
+          backend: 'python'
+          # Earlier jobs in this run already install and execute the
+          # same checkout, with the same read-only permissions, so this
+          # job adds no exposure. 'auto' would skip fork pull requests
+          # and merge queues, leaving the Grype audit with no SBOM.
+          untrusted_checkout: 'false'
+          # The build's interpreter, chosen from project metadata: the
+          # backend binds uv to python_version, so its 3.12 default
+          # would fail projects requiring a newer Python
+          # yamllint disable-line rule:line-length
+          python_version: ${{ needs.python-build.outputs.build_python_version }}
           path_prefix: ${{ inputs.path_prefix }}
           include_dev: ${{ inputs.sbom_include_dev }}
           # The Grype audit below scans the JSON SBOM, so JSON must
