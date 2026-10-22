@@ -71,7 +71,14 @@ complete caller.
 [trusted-publishers]: https://docs.pypi.org/trusted-publishers/
 
 The multi-arch variants add a `python-metadata` job and fan the build,
-test and audit jobs across an architecture matrix.
+test and audit jobs across an architecture matrix. The primary build
+leg (the first `runners` entry with the first Python version) honours
+`build_formats` and builds the single sdist; every other leg builds
+wheels and drops any sdist before uploading, which covers `tox_build`
+where the project's tox environment ignores `build_formats`. The
+release variant fails `attach-artefacts` when the merged `dist/` holds
+a duplicated or corrupt sdist, or none when `build_formats` asks for
+one.
 
 ### CBOM (informational)
 

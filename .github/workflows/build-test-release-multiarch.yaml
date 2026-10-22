@@ -59,7 +59,12 @@ on:
         type: string
         default: '.'
       build_formats:
-        description: "Build formats: 'sdist', 'wheel', or 'both'"
+        description: >-
+          Build formats: 'sdist', 'wheel', or 'both'. The primary matrix
+          leg (first runners entry, first Python version) builds these
+          formats; every other leg builds wheels and uploads them
+          without any sdist (tox_build ignores this input), so the
+          merged dist-* artefacts never hold more than one sdist.
         required: false
         type: string
         default: ''
@@ -694,6 +699,15 @@ jobs:
         # yamllint disable-line rule:line-length
         python-version: ${{ fromJson(needs.python-metadata.outputs.versions_json) }}
     runs-on: ${{ matrix.target.runner }}
+    env:
+      # Only the primary leg (first runner, first Python version) may
+      # ship an sdist. Every leg would otherwise upload its own
+      # non-reproducible <name>-<version>.tar.gz, and merge-multiple
+      # downloads extract them concurrently onto one corrupt path.
+      # Expressions compare arrays by identity, so a runner given as a
+      # label array is compared in its JSON form.
+      # yamllint disable-line rule:line-length
+      PRIMARY_LEG: ${{ toJSON(matrix.target.runner) == toJSON(fromJson(inputs.runners)[0].runner) && matrix.target.arch == fromJson(inputs.runners)[0].arch && matrix.python-version == fromJson(needs.python-metadata.outputs.versions_json)[0] }}
     permissions:
       contents: read
       id-token: write       # Needed for attestations
@@ -776,7 +790,10 @@ jobs:
           artefact_name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
           path_prefix: ${{ inputs.path_prefix }}
           python_version: ${{ matrix.python-version }}
-          build_formats: ${{ inputs.build_formats || 'both' }}
+          # yamllint disable-line rule:line-length
+          build_formats: ${{ env.PRIMARY_LEG == 'true' && (inputs.build_formats || 'both') || 'wheel' }}
+          # Other legs upload below, after dropping any sdist
+          artefact_upload: ${{ env.PRIMARY_LEG }}
           tox_build: ${{ inputs.tox_build }}
           auditwheel: ${{ inputs.auditwheel }}
           manylinux_version: ${{ inputs.manylinux_version }}
@@ -784,6 +801,37 @@ jobs:
           make_args: ${{ inputs.make_args }}
           sigstore_sign: ${{ inputs.sigstore_sign }}
           attestations: ${{ inputs.attestations }}
+
+      # tox_build runs the project's own tox build environment, which
+      # ignores build_formats, so a non-primary leg prunes any sdist
+      # itself before uploading rather than trust the build to omit it.
+      - name: 'Drop sdist from non-primary leg'
+        if: env.PRIMARY_LEG != 'true'
+        shell: bash
+        env:
+          ARTEFACT_PATH: ${{ steps.python-build.outputs.artefact_path }}
+        run: |
+          # Keep wheels only in this leg's artefact
+          set -euo pipefail
+          shopt -s nullglob
+          for file in "${ARTEFACT_PATH}"/*.tar.gz*; do
+            echo "Dropping ${file}"
+            rm -f -- "${file}"
+          done
+          wheels=("${ARTEFACT_PATH}"/*.whl)
+          if [ "${#wheels[@]}" -eq 0 ]; then
+            echo "::error::No wheel in ${ARTEFACT_PATH}"
+            exit 1
+          fi
+      - name: 'Upload build artefacts'
+        if: env.PRIMARY_LEG != 'true'
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          # yamllint disable-line rule:line-length
+          name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
+          path: ${{ steps.python-build.outputs.artefact_path }}
+          if-no-files-found: error
 
   # Release variant: gate downstream strictly on python-build success.
   # A broken build means no release, so there is no value in running
@@ -1371,6 +1419,52 @@ jobs:
           pattern: 'dist-*'
           path: 'dist'
           merge-multiple: true
+
+      # merge-multiple extracts artefacts concurrently into dist/, so
+      # same-named sdists from several legs collapse onto one path and
+      # leave a corrupt file. Stop here rather than publish it.
+      - name: 'Verify merged sdist'
+        shell: bash
+        env:
+          BUILD_FORMATS: ${{ inputs.build_formats || 'both' }}
+        run: |
+          # Reject a missing, duplicated or corrupt sdist in dist/
+          set -euo pipefail
+          shopt -s nullglob
+          sdists=(dist/*.tar.gz)
+          echo "Source distributions in dist/: ${#sdists[@]}"
+          failed=0
+          if [ "${BUILD_FORMATS}" != 'wheel' ] \
+            && [ "${#sdists[@]}" -eq 0 ]; then
+            echo "::error::build_formats '${BUILD_FORMATS}' expects an sdist"
+            failed=1
+          fi
+          declare -A seen=()
+          for sdist in "${sdists[@]}"; do
+            base="$(basename "${sdist}" .tar.gz)"
+            # PEP 625: <normalised name>-<version>; key on the PEP 503
+            # normalised name so case or separator variants still clash
+            name="$(printf '%s' "${base%-*}" | tr '[:upper:]' '[:lower:]' \
+              | sed -E 's/[-_.]+/-/g')"
+            key="${name}-${base##*-}"
+            if [ -n "${seen[${key}]:-}" ]; then
+              echo "::error::Duplicate sdist for ${key}:" \
+                "${seen[${key}]} and ${sdist}"
+              failed=1
+            else
+              seen[${key}]="${sdist}"
+            fi
+            if ! gzip -t "${sdist}"; then
+              echo "::error::sdist fails gzip -t: ${sdist}"
+              failed=1
+            elif ! tar -tzf "${sdist}" > /dev/null; then
+              echo "::error::sdist fails tar -tzf: ${sdist}"
+              failed=1
+            else
+              echo "Verified: ${sdist}"
+            fi
+          done
+          exit "${failed}"
 
       - name: 'Attach build artefacts to release'
         # yamllint disable-line rule:line-length

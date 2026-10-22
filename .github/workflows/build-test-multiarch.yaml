@@ -52,7 +52,12 @@ on:
         type: string
         default: '.'
       build_formats:
-        description: "Build formats: 'sdist', 'wheel', or 'both'"
+        description: >-
+          Build formats: 'sdist', 'wheel', or 'both'. The primary matrix
+          leg (first runners entry, first Python version) builds these
+          formats; every other leg builds wheels and uploads them
+          without any sdist (tox_build ignores this input), so the
+          merged dist-* artefacts never hold more than one sdist.
         required: false
         type: string
         default: ''
@@ -583,6 +588,15 @@ jobs:
         # yamllint disable-line rule:line-length
         python-version: ${{ fromJson(needs.python-metadata.outputs.versions_json) }}
     runs-on: ${{ matrix.target.runner }}
+    env:
+      # Only the primary leg (first runner, first Python version) may
+      # ship an sdist. Every leg would otherwise upload its own
+      # non-reproducible <name>-<version>.tar.gz, and merge-multiple
+      # downloads extract them concurrently onto one corrupt path.
+      # Expressions compare arrays by identity, so a runner given as a
+      # label array is compared in its JSON form.
+      # yamllint disable-line rule:line-length
+      PRIMARY_LEG: ${{ toJSON(matrix.target.runner) == toJSON(fromJson(inputs.runners)[0].runner) && matrix.target.arch == fromJson(inputs.runners)[0].arch && matrix.python-version == fromJson(needs.python-metadata.outputs.versions_json)[0] }}
     permissions:
       contents: read
     timeout-minutes: ${{ inputs.build_timeout_minutes }}
@@ -663,12 +677,46 @@ jobs:
           artefact_name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
           path_prefix: ${{ inputs.path_prefix }}
           python_version: ${{ matrix.python-version }}
-          build_formats: ${{ inputs.build_formats || 'both' }}
+          # yamllint disable-line rule:line-length
+          build_formats: ${{ env.PRIMARY_LEG == 'true' && (inputs.build_formats || 'both') || 'wheel' }}
+          # Other legs upload below, after dropping any sdist
+          artefact_upload: ${{ env.PRIMARY_LEG }}
           tox_build: ${{ inputs.tox_build }}
           auditwheel: ${{ inputs.auditwheel }}
           manylinux_version: ${{ inputs.manylinux_version }}
           make: ${{ inputs.make }}
           make_args: ${{ inputs.make_args }}
+
+      # tox_build runs the project's own tox build environment, which
+      # ignores build_formats, so a non-primary leg prunes any sdist
+      # itself before uploading rather than trust the build to omit it.
+      - name: 'Drop sdist from non-primary leg'
+        if: env.PRIMARY_LEG != 'true'
+        shell: bash
+        env:
+          ARTEFACT_PATH: ${{ steps.python-build.outputs.artefact_path }}
+        run: |
+          # Keep wheels only in this leg's artefact
+          set -euo pipefail
+          shopt -s nullglob
+          for file in "${ARTEFACT_PATH}"/*.tar.gz*; do
+            echo "Dropping ${file}"
+            rm -f -- "${file}"
+          done
+          wheels=("${ARTEFACT_PATH}"/*.whl)
+          if [ "${#wheels[@]}" -eq 0 ]; then
+            echo "::error::No wheel in ${ARTEFACT_PATH}"
+            exit 1
+          fi
+      - name: 'Upload build artefacts'
+        if: env.PRIMARY_LEG != 'true'
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          # yamllint disable-line rule:line-length
+          name: dist-${{ matrix.target.arch }}-py${{ matrix.python-version }}
+          path: ${{ steps.python-build.outputs.artefact_path }}
+          if-no-files-found: error
 
   # PR variant: gate downstream on python-metadata (the matrix source),
   # not on aggregate python-build success. python-build is a matrix
