@@ -48,7 +48,7 @@ jobs:
     # needs; everything else falls back to sensible defaults.
     # with:
     #   path_prefix: '.'              # project root (monorepo subdir, etc.)
-    #   build_formats: 'both'         # 'sdist', 'wheel', or 'both'
+    #   build_formats: 'both'         # 'sdist'/'wheel'/'both'; sdist on 1st leg
     #   tox_build: false              # build via tox
     #   tox_tests: false              # run tests via tox
     #   pytest_args: ''               # extra pytest flags
