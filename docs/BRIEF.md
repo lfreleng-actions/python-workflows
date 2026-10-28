@@ -246,7 +246,7 @@ so any other value (including a typo) falls back to block and the secure
 posture cannot be silently weakened.
 Reuse the exact existing pins:
 
-- `step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411` (v2.19.4)
+- `step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43` (v2.22.3)
 - `lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc` (v0.2.0)
 - allow_list `@18d9c4446bea555d0783e850f6d295f844fe8f67` (v0.1.1)
 
