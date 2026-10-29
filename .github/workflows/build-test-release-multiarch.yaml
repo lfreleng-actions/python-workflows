@@ -768,7 +768,7 @@ jobs:
         if: inputs.setup_script != ''
         id: setup-script-check
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/path-check-action@fae378ddc06f437c39464ca02d6d9c362ca89d3c  # v0.2.2
+        uses: lfreleng-actions/path-check-action@fb77045699ead7bb7014186ae23e4935ce277a21  # v0.2.3
         with:
           path: ${{ inputs.setup_script }}
       - name: 'Run setup script'
@@ -902,7 +902,7 @@ jobs:
         if: inputs.setup_script != ''
         id: setup-script-check
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/path-check-action@fae378ddc06f437c39464ca02d6d9c362ca89d3c  # v0.2.2
+        uses: lfreleng-actions/path-check-action@fb77045699ead7bb7014186ae23e4935ce277a21  # v0.2.3
         with:
           path: ${{ inputs.setup_script }}
       - name: 'Run setup script'
@@ -1003,7 +1003,7 @@ jobs:
         if: inputs.setup_script != ''
         id: setup-script-check
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/path-check-action@fae378ddc06f437c39464ca02d6d9c362ca89d3c  # v0.2.2
+        uses: lfreleng-actions/path-check-action@fb77045699ead7bb7014186ae23e4935ce277a21  # v0.2.3
         with:
           path: ${{ inputs.setup_script }}
       - name: 'Run setup script'
@@ -1087,7 +1087,7 @@ jobs:
         if: inputs.setup_script != ''
         id: setup-script-check
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/path-check-action@fae378ddc06f437c39464ca02d6d9c362ca89d3c  # v0.2.2
+        uses: lfreleng-actions/path-check-action@fb77045699ead7bb7014186ae23e4935ce277a21  # v0.2.3
         with:
           path: ${{ inputs.setup_script }}
       - name: 'Run setup script'
