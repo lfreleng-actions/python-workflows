@@ -128,6 +128,9 @@ defaults each target to the consumer's default/HEAD branch.
 | `grype_permit_fail` | grype (falls back to `vars.NO_BLOCK_AUDIT_FAIL`) | `false` |
 | `harden_runner_egress` | harden-runner | `block` |
 | `harden_runner_allowlist` | harden-runner allow-list ref | pinned lfreleng list |
+| `harden_runner_supplemental_allowlist` | harden-runner-block-action (`supplemental_config`) | `''` |
+| `harden_runner_supplemental_unpinned` | harden-runner-block-action (`supplemental_unpinned`) | `false` |
+| `harden_runner_extra_endpoints` | harden-runner-block-action (`extra_endpoints`) | `''` |
 | `gerrit_refspec` / `gerrit_project` / `gerrit_branch` / `gerrit_url` | Gerrit-aware checkout | `''` |
 
 **`build-test-release.yaml`:** all of the above plus `attestations`
@@ -237,6 +240,9 @@ The nine standard Gerrit inputs on the wrappers:
 | --- | --- |
 | `harden_runner_egress` | `block` |
 | `harden_runner_allowlist` | pinned `lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@18d9c444…` |
+| `harden_runner_supplemental_allowlist` | `''` |
+| `harden_runner_supplemental_unpinned` | `false` |
+| `harden_runner_extra_endpoints` | `''` |
 
 `block` runs `harden-runner-block-action` (out-of-band allow-list loader)
 plus harden-runner block mode (dependamerge/nss-ng pattern). `audit` skips
