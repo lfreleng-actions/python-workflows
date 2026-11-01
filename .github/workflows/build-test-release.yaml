@@ -254,7 +254,7 @@ on:
         required: false
         type: string
         # yamllint disable-line rule:line-length
-        default: 'lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@084d6861688632b2edb6bde3c180145bebf9cc7a'  # v0.17.2
+        default: 'lfreleng-actions//.github/harden-runner/lfreleng-actions/allow_list.txt@6d4a65c5601afd6c2fbe52bda4b0024b132f265d'  # v0.19.0
 
       # --- Gerrit-aware checkout (empty unless dispatched via Gerrit) ---
       gerrit_refspec:
@@ -420,7 +420,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
       - name: 'Harden runner'
@@ -435,7 +435,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
@@ -477,7 +477,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -493,7 +493,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
@@ -516,7 +516,7 @@ jobs:
       - name: 'Verify pushed tag'
         id: 'tag-validate'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/tag-validate-action@63470621b8ebc5c4fc86ebb616727dd0a7285dd9  # v1.1.7
+        uses: lfreleng-actions/tag-validate-action@eab7d92e02c8b447a4de04e68bd5ee7eae3450eb  # v1.1.8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           require_type: 'semver'
@@ -583,7 +583,7 @@ jobs:
       # would win, and audit mode would be unreachable.
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -599,7 +599,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
@@ -652,7 +652,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -668,7 +668,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
@@ -724,7 +724,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -740,7 +740,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
@@ -781,7 +781,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -797,7 +797,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
@@ -875,7 +875,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -901,7 +901,7 @@ jobs:
       - name: 'Grype audit SBOM'
         id: grype-audit
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/grype-scan-action@7b6b12b60de8ff051f2f8021439c1ef0b82b98c1  # v0.4.0
+        uses: lfreleng-actions/grype-scan-action@5c81b23afb2ea771b2d247807a12d90783328675  # v0.5.0
         with:
           sbom: 'sbom-cyclonedx.json'
           fail-on: ${{ inputs.grype_fail_on }}
@@ -948,7 +948,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -970,7 +970,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
@@ -1010,7 +1010,7 @@ jobs:
       - name: 'Generate CBOM'
         id: cbom
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/cbom-action@06a25686fe4ebcbb8c9f28d6948cdca7d65ed852  # v0.0.1
+        uses: lfreleng-actions/cbom-action@ec9253d00fccbe103002ada6067224ec767a7b1c  # v0.0.2
         with:
           path_prefix: ${{ inputs.path_prefix }}
           # Reports go to runner temp, never the workspace. The action
@@ -1082,7 +1082,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -1098,7 +1098,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
@@ -1145,7 +1145,7 @@ jobs:
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
         with:
           config: ${{ inputs.harden_runner_allowlist }}
           allow_list_summary: 'false'
@@ -1161,7 +1161,7 @@ jobs:
       - name: 'Checkout Gerrit change'
         if: inputs.gerrit_refspec != ''
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/checkout-gerrit-change-action@35e98c8043ec411611e464e296bcfb441a5c5093  # v1.1.2
+        uses: lfreleng-actions/checkout-gerrit-change-action@f0dd3d4dd4fceff1f56348152ecf0e040594f16a  # v1.2.1
         with:
           gerrit-refspec: ${{ inputs.gerrit_refspec }}
           gerrit-project: ${{ inputs.gerrit_project }}
