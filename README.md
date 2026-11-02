@@ -176,7 +176,63 @@ All inputs are optional and default to the canonical behaviour; see the
 `inputs:` block at the top of each workflow file for the full, documented
 list (project layout, matrix override, tox, pytest, audit allow-lists, SBOM
 options, Grype severity gate, CBOM options, runner hardening, and
-Gerrit-aware checkout).
+Gerrit-aware checkout). All four workflows share the runner hardening
+inputs; [Egress allow-list](#egress-allow-list) describes them.
+
+## Egress allow-list
+
+Every job hardens its runner with `step-security/harden-runner`. In
+`block` mode, `lfreleng-actions/harden-runner-block-action` first loads
+the egress allow-list, and the runner then refuses any connection the
+list does not name. All four workflows expose the same five inputs to
+shape that list, and pass each one to every block-action step:
+
+<!-- markdownlint-disable MD013 -->
+
+| Name                                   | Type    | Default                   | Description                                                                                                     |
+| -------------------------------------- | ------- | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `harden_runner_egress`                 | string  | `'block'`                 | Egress policy: `block` or `audit`; any other value falls back to `block`                                        |
+| `harden_runner_allowlist`              | string  | organisation list, pinned | Baseline allow-list, passed to the action as `config`                                                           |
+| `harden_runner_supplemental_allowlist` | string  | `''`                      | Extra list merged with the baseline, in the same coordinate grammar; passed as `supplemental_config`            |
+| `harden_runner_supplemental_unpinned`  | boolean | `false`                   | Let the supplemental list omit `@ref` and follow its default branch; passed as `supplemental_unpinned`          |
+| `harden_runner_extra_endpoints`        | string  | `''`                      | Inline `host[:port]` tokens, separated by spaces or newlines, merged into the list; passed as `extra_endpoints` |
+
+<!-- markdownlint-enable MD013 -->
+
+**An organisation's own list.** A project that needs hosts beyond the
+baseline keeps them in its organisation's supplemental list. An ONAP
+caller can follow ONAP's list on its default branch, so a host added
+there reaches every ONAP project without a pin bump:
+
+<!-- markdownlint-disable MD046 -->
+
+```yaml
+    with:
+      harden_runner_supplemental_allowlist: 'onap//'
+      harden_runner_supplemental_unpinned: true
+```
+
+<!-- markdownlint-enable MD046 -->
+
+The action accepts an unpinned list from the caller's own organisation
+alone. A list from another organisation must carry an `@ref` pin, and
+`harden_runner_supplemental_unpinned` cannot lift that rule.
+
+**A missing list fails the job.** When
+`harden_runner_supplemental_allowlist` names a list, the workflows set
+the action's `supplemental_required`, so a list the action cannot find
+stops the job at the load step rather than at the first blocked
+connection. An empty value adds nothing and requires nothing.
+
+**Inline endpoints are a stopgap.** `harden_runner_extra_endpoints`
+unblocks a caller at once, for example
+`harden_runner_extra_endpoints: 'registry.example.org:443'`. Move the
+host into the organisation's list as the lasting fix, then drop the
+input.
+
+**Audit trail.** The action records which list it loaded, and at which
+commit, in its `supplemental_source` and `supplemental_sha` outputs.
+For an unpinned list those outputs show what each run allowed.
 
 ## Gerrit support
 
