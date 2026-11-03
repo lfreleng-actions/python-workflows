@@ -36,20 +36,26 @@ permissions: {}
 
 jobs:
   # Standard single-arch consumers, fanned out in parallel via a matrix.
+  # Each leg passes its own artifact_suffix: both call build-test.yaml
+  # in the same run, and unsuffixed artefact names would collide, so a
+  # leg's Grype job could download and scan the other leg's SBOM.
   standard:
     name: 'Standard'
     strategy:
       fail-fast: false
       matrix:
-        repository:
-          - lfreleng-actions/dependamerge
-          - lfreleng-actions/lftools-uv
+        include:
+          - name: dependamerge
+            repository: lfreleng-actions/dependamerge
+          - name: lftools-uv
+            repository: lfreleng-actions/lftools-uv
     permissions:
       contents: read
       pull-requests: read  # Reusable workflow reads PR metadata
     uses: $/.github/workflows/build-test.yaml
     with:
       repository: ${{ matrix.repository }}
+      artifact_suffix: '-${{ matrix.name }}'
       # Exercise the allow-list inputs without granting anything new.
       # A same-organisation list may follow its default branch, and
       # 'lfreleng-actions//' resolves to the organisation list itself,
