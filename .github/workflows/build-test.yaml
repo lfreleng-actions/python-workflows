@@ -165,6 +165,59 @@ on:
         required: false
         type: boolean
         default: false
+      grype_gate_when:
+        description: >-
+          When Grype findings block the job: 'always', or
+          'dependencies-changed' to report them as warnings unless the
+          change under review touched a dependency file (pyproject.toml,
+          a lock file, requirements*.txt and the rest of the action's
+          python preset). A change the workflow cannot compare against
+          its base keeps the gate on.
+        required: false
+        type: string
+        default: 'always'
+      grype_dependency_policy:
+        description: >-
+          Which Grype findings gate: 'all', or 'declared' to gate only
+          on packages the project declares and report inherited ones
+          as warnings. Classified only when the SBOM names a root
+          component; see the README.
+        required: false
+        type: string
+        default: 'declared'
+      grype_transitive_fail_on:
+        description: >-
+          Minimum severity at which an inherited package still gates
+          under grype_dependency_policy 'declared': 'none',
+          'negligible', 'low', 'medium', 'high' or 'critical'
+        required: false
+        type: string
+        default: 'critical'
+      grype_only_fixed:
+        description: >-
+          Gate only on findings with a published fix; one nobody can
+          act on yet is reported as a warning instead
+        required: false
+        type: boolean
+        default: true
+      grype_remediation_window_days:
+        description: >-
+          Under grype_gate_when 'dependencies-changed', a finding in a
+          change that left the dependency chain alone stays a warning
+          for this many days after its fix became available, then
+          gates. A whole number of days; empty turns the window off.
+          Does nothing on 'always' runs.
+        required: false
+        type: string
+        default: ''
+      grype_remediation_window_start:
+        description: >-
+          Optional YYYY-MM-DD floor for the remediation window clock:
+          it starts at the later of the fix date and this date, so an
+          existing backlog gets the full window. Empty sets no floor.
+        required: false
+        type: string
+        default: ''
 
       # --- CBOM (informational) ---
       # A CBOM records which cryptographic algorithms, key sizes, modes
@@ -316,14 +369,14 @@ jobs:
   gerrit-validate:
     name: 'Validate Workflow Inputs'
     # Fails fast with a clear message on invalid workflow inputs: the
-    # test artefact path, the artefact name suffix, job timeouts, and
-    # the Gerrit parameters (when gerrit_refspec is set without the
-    # project/branch the Gerrit checkout path also requires). The
-    # build-chain root job depends on this, so invalid inputs stop the
-    # pipeline early and cleanly. This job always runs (only some
-    # validation steps are conditional), so gating dependents on it
-    # does not trip GitHub's "skipped need skips dependents"
-    # behaviour.
+    # test artefact path, the artefact name suffix, job timeouts, the
+    # Grype gate policy, and the Gerrit parameters (when gerrit_refspec
+    # is set without the project/branch the Gerrit checkout path also
+    # requires). The build-chain root job depends on this, so invalid
+    # inputs stop the pipeline early and cleanly. This job always runs
+    # (only some validation steps are conditional), so gating
+    # dependents on it does not trip GitHub's "skipped need skips
+    # dependents" behaviour.
     runs-on: ubuntu-latest
     permissions: {}
     timeout-minutes: 2
@@ -409,6 +462,81 @@ jobs:
             fi
           done
           exit "${error}"
+
+      - name: 'Validate grype_gate_when input'
+        id: validate-grype-gate-when
+        shell: bash
+        env:
+          GRYPE_GATE_WHEN: ${{ inputs.grype_gate_when }}
+        run: |
+          # grype-scan-action rejects other values too, but only after
+          # the build and SBOM jobs have run
+          case "${GRYPE_GATE_WHEN}" in
+            always|dependencies-changed) ;;
+            *)
+              # A newline in the value could forge a workflow command
+              echo "::error::Invalid grype_gate_when input:" \
+                "$(printf '%s' "${GRYPE_GATE_WHEN}" | tr -d '\r\n')"
+              exit 1
+              ;;
+          esac
+
+      - name: 'Validate Grype policy inputs'
+        id: validate-grype-policy
+        shell: bash
+        env:
+          GRYPE_DEPENDENCY_POLICY: ${{ inputs.grype_dependency_policy }}
+          GRYPE_TRANSITIVE_FAIL_ON: ${{ inputs.grype_transitive_fail_on }}
+          GRYPE_ONLY_FIXED: ${{ inputs.grype_only_fixed }}
+          # yamllint disable-line rule:line-length
+          GRYPE_REMEDIATION_WINDOW_DAYS: ${{ inputs.grype_remediation_window_days }}
+          # yamllint disable-line rule:line-length
+          GRYPE_REMEDIATION_WINDOW_START: ${{ inputs.grype_remediation_window_start }}
+        run: |
+          # grype-scan-action rejects other values too, but only after
+          # the build and SBOM jobs have run
+          errors=0
+          # A newline in a rejected value could forge a workflow command
+          invalid() {
+            echo "::error::Invalid $1 input:" \
+              "$(printf '%s' "$2" | tr -d '\r\n')"
+            errors=1
+          }
+          # $1 input name, $2 its value, then the values it may take
+          check() {
+            local name="$1" value="$2" allowed
+            shift 2
+            for allowed in "$@"; do
+              if [ "${value}" = "${allowed}" ]; then
+                return 0
+              fi
+            done
+            invalid "${name}" "${value}"
+          }
+          check grype_dependency_policy "${GRYPE_DEPENDENCY_POLICY}" \
+            all declared
+          check grype_transitive_fail_on "${GRYPE_TRANSITIVE_FAIL_ON}" \
+            none negligible low medium high critical
+          check grype_only_fixed "${GRYPE_ONLY_FIXED}" true false
+          # Empty turns the window off; otherwise a whole number of days
+          if [[ ! "${GRYPE_REMEDIATION_WINDOW_DAYS}" =~ ^[0-9]*$ ]]; then
+            invalid grype_remediation_window_days \
+              "${GRYPE_REMEDIATION_WINDOW_DAYS}"
+          fi
+          # Empty sets no floor; otherwise a real calendar date, which
+          # the shape alone cannot prove, so GNU date reads it back.
+          # Whether it lies in the future is left to the action.
+          if [ -n "${GRYPE_REMEDIATION_WINDOW_START}" ]; then
+            iso_date='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+            if [[ ! "${GRYPE_REMEDIATION_WINDOW_START}" =~ ${iso_date} ]] \
+              || [ "$(date -u -d "${GRYPE_REMEDIATION_WINDOW_START}" \
+                +%Y-%m-%d 2>/dev/null)" \
+                != "${GRYPE_REMEDIATION_WINDOW_START}" ]; then
+              invalid grype_remediation_window_start \
+                "${GRYPE_REMEDIATION_WINDOW_START}"
+            fi
+          fi
+          exit "${errors}"
 
       - name: 'Require Gerrit project, branch and URL'
         if: inputs.gerrit_refspec != ''
@@ -784,7 +912,29 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
+          # dependency-change-action compares HEAD with its parent, so
+          # the depth stays at 2 or more; the Gerrit checkout fetches
+          # that depth by default. testing.yaml asserts both.
+          fetch-depth: 2
           persist-credentials: false
+
+      # Writes dependency-change.json beside the SBOM for the grype
+      # job's dependencies-changed gate, only when it resolved what the
+      # change touched. Every path it cannot vouch for writes no file,
+      # which the grype job reads as unresolved, keeping the gate on.
+      # It reads git objects alone, so nothing the SBOM generator
+      # writes to the tree affects it.
+      - name: 'Detect dependency changes'
+        id: dependency-change
+        # yamllint disable-line rule:line-length
+        if: inputs.grype_enabled && inputs.grype_gate_when == 'dependencies-changed'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/dependency-change-action@257928b15e4e6a5cc5a888435be59b058055c4e1  # v0.0.1
+        with:
+          ecosystems: 'python'
+          path-prefix: ${{ inputs.path_prefix }}
+          gerrit-refspec: ${{ inputs.gerrit_refspec }}
+          output: 'dependency-change.json'
 
       - name: 'Generate SBOM'
         id: sbom
@@ -812,12 +962,18 @@ jobs:
           sbom_format: ${{ inputs.sbom_format == 'xml' && 'both' || inputs.sbom_format }}
 
       - name: 'Upload SBOM artifacts'
+        id: upload-sbom
         # yamllint disable-line rule:line-length
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: sbom-files${{ inputs.artifact_suffix }}
-          # Glob matches whichever SBOM formats sbom_format produced
-          path: sbom-cyclonedx.*
+          # Glob matches whichever SBOM formats sbom_format produced.
+          # The dependency-change sidecar travels in the same artefact
+          # so the grype job reads this call's own signal; an
+          # unresolved result writes none, and the SBOM still matches
+          path: |
+            sbom-cyclonedx.*
+            dependency-change.json
           retention-days: 45
           if-no-files-found: warn
 
@@ -826,12 +982,17 @@ jobs:
         env:
           SBOM_COMPONENT_COUNT: ${{ steps.sbom.outputs.component_count }}
           SBOM_DEPENDENCY_MANAGER: ${{ steps.sbom.outputs.dependency_manager }}
+          DEPENDENCY_CHANGE: ${{ steps.dependency-change.outputs.reason }}
         run: |
           # SBOM summary
           {
             echo "## SBOM Summary"
             echo "SBOM count: ${SBOM_COMPONENT_COUNT}"
             echo "Tool used: ${SBOM_DEPENDENCY_MANAGER}"
+            if [ -n "${DEPENDENCY_CHANGE}" ]; then
+              echo ""
+              echo "Dependency change: ${DEPENDENCY_CHANGE}"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   grype:
@@ -869,6 +1030,7 @@ jobs:
             ${{ env.CONNECTION_ALLOW_LIST }}
 
       - name: 'Download SBOM artefact'
+        id: download-sbom
         # yamllint disable-line rule:line-length
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
@@ -877,7 +1039,8 @@ jobs:
       # The grype_permit_fail input (or, when unset, the NO_BLOCK_AUDIT_FAIL
       # repository variable) disables failure propagation so pull requests
       # can proceed when blocked by newly discovered CVEs in transitive
-      # dependencies.
+      # dependencies. grype_gate_when narrows when findings block in
+      # the first place; permit-fail still passes an armed gate.
       - name: 'Grype audit SBOM'
         id: grype-audit
         # yamllint disable-line rule:line-length
@@ -885,10 +1048,46 @@ jobs:
         with:
           sbom: 'sbom-cyclonedx.json'
           fail-on: ${{ inputs.grype_fail_on }}
+          only-fixed: ${{ inputs.grype_only_fixed }}
+          dependency-policy: ${{ inputs.grype_dependency_policy }}
+          transitive-fail-on: ${{ inputs.grype_transitive_fail_on }}
+          gate-when: ${{ inputs.grype_gate_when }}
+          # Downloaded beside the SBOM when the sbom job resolved the
+          # change; an absent manifest keeps the gate on
+          dependency-change-manifest: 'dependency-change.json'
+          # yamllint disable-line rule:line-length
+          remediation-window-days: ${{ inputs.grype_remediation_window_days }}
+          # yamllint disable-line rule:line-length
+          remediation-window-start: ${{ inputs.grype_remediation_window_start }}
           # yamllint disable-line rule:line-length
           permit-fail: ${{ inputs.grype_permit_fail || vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
           artifact-name: grype-scan-results${{ inputs.artifact_suffix }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The action's summary gives the gate's reason only when it
+      # downgraded findings to warnings; record the decision on every
+      # dependency-aware run, including those that gate or find nothing.
+      # The step name carries the verdict into the job log, where
+      # testing.yaml reads it.
+      # yamllint disable-line rule:line-length
+      - name: 'Grype gate active: ${{ steps.grype-audit.outputs.gate-active }}'
+        # yamllint disable-line rule:line-length
+        if: ${{ !cancelled() && inputs.grype_gate_when == 'dependencies-changed' && steps.grype-audit.outcome != 'skipped' }}
+        shell: bash
+        env:
+          GATE_ACTIVE: ${{ steps.grype-audit.outputs.gate-active }}
+          GATE_REASON: ${{ steps.grype-audit.outputs.gate-reason }}
+          ADVISORY: ${{ steps.grype-audit.outputs.advisory-matches }}
+        run: |
+          # Grype gate summary
+          {
+            echo "### Grype gate"
+            echo ""
+            echo "| Gate active | Reason | Advisory matches |"
+            echo "| ----------- | ------ | ---------------- |"
+            echo "| ${GATE_ACTIVE:-unknown} | ${GATE_REASON:-unknown}" \
+              "| ${ADVISORY:-unknown} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Informational leg. Nothing downstream reads the CBOM, so this job
   # sits beside the test, audit and SBOM legs rather than in sequence

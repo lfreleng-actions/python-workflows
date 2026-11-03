@@ -171,6 +171,49 @@ on:
         required: false
         type: boolean
         default: false
+      # A release always gates, so there is no grype_gate_when here;
+      # the policy inputs below match build-test.yaml so a caller can
+      # carry one configuration across both.
+      grype_dependency_policy:
+        description: >-
+          Which Grype findings gate: 'all', or 'declared' to gate only
+          on packages the project declares and report inherited ones
+          as warnings. Classified only when the SBOM names a root
+          component; see the README.
+        required: false
+        type: string
+        default: 'declared'
+      grype_transitive_fail_on:
+        description: >-
+          Minimum severity at which an inherited package still gates
+          under grype_dependency_policy 'declared': 'none',
+          'negligible', 'low', 'medium', 'high' or 'critical'
+        required: false
+        type: string
+        default: 'critical'
+      grype_only_fixed:
+        description: >-
+          Gate only on findings with a published fix; one nobody can
+          act on yet is reported as a warning instead
+        required: false
+        type: boolean
+        default: true
+      grype_remediation_window_days:
+        description: >-
+          Remediation window in whole days, validated and passed through
+          for parity with build-test.yaml. A release always gates, so
+          the window changes nothing here; empty turns it off.
+        required: false
+        type: string
+        default: ''
+      grype_remediation_window_start:
+        description: >-
+          Optional YYYY-MM-DD floor for the remediation window clock,
+          validated and passed through for parity with build-test.yaml.
+          Empty sets no floor.
+        required: false
+        type: string
+        default: ''
 
       # --- CBOM (informational) ---
       # A CBOM records which cryptographic algorithms, key sizes, modes
@@ -339,14 +382,14 @@ jobs:
   gerrit-validate:
     name: 'Validate Workflow Inputs'
     # Fails fast with a clear message on invalid workflow inputs: the
-    # test artefact path, the artefact name suffix, job timeouts, and
-    # the Gerrit parameters (when gerrit_refspec is set without the
-    # project/branch the Gerrit checkout path also requires). The
-    # build-chain root job depends on this, so invalid inputs stop the
-    # pipeline early and cleanly. This job always runs (only some
-    # validation steps are conditional), so gating dependents on it
-    # does not trip GitHub's "skipped need skips dependents"
-    # behaviour.
+    # test artefact path, the artefact name suffix, job timeouts, the
+    # Grype gate policy, and the Gerrit parameters (when gerrit_refspec
+    # is set without the project/branch the Gerrit checkout path also
+    # requires). The build-chain root job depends on this, so invalid
+    # inputs stop the pipeline early and cleanly. This job always runs
+    # (only some validation steps are conditional), so gating
+    # dependents on it does not trip GitHub's "skipped need skips
+    # dependents" behaviour.
     runs-on: ubuntu-latest
     permissions: {}
     timeout-minutes: 2
@@ -432,6 +475,63 @@ jobs:
             fi
           done
           exit "${error}"
+
+      - name: 'Validate Grype policy inputs'
+        id: validate-grype-policy
+        shell: bash
+        env:
+          GRYPE_DEPENDENCY_POLICY: ${{ inputs.grype_dependency_policy }}
+          GRYPE_TRANSITIVE_FAIL_ON: ${{ inputs.grype_transitive_fail_on }}
+          GRYPE_ONLY_FIXED: ${{ inputs.grype_only_fixed }}
+          # yamllint disable-line rule:line-length
+          GRYPE_REMEDIATION_WINDOW_DAYS: ${{ inputs.grype_remediation_window_days }}
+          # yamllint disable-line rule:line-length
+          GRYPE_REMEDIATION_WINDOW_START: ${{ inputs.grype_remediation_window_start }}
+        run: |
+          # grype-scan-action rejects other values too, but only after
+          # the build and SBOM jobs have run
+          errors=0
+          # A newline in a rejected value could forge a workflow command
+          invalid() {
+            echo "::error::Invalid $1 input:" \
+              "$(printf '%s' "$2" | tr -d '\r\n')"
+            errors=1
+          }
+          # $1 input name, $2 its value, then the values it may take
+          check() {
+            local name="$1" value="$2" allowed
+            shift 2
+            for allowed in "$@"; do
+              if [ "${value}" = "${allowed}" ]; then
+                return 0
+              fi
+            done
+            invalid "${name}" "${value}"
+          }
+          check grype_dependency_policy "${GRYPE_DEPENDENCY_POLICY}" \
+            all declared
+          check grype_transitive_fail_on "${GRYPE_TRANSITIVE_FAIL_ON}" \
+            none negligible low medium high critical
+          check grype_only_fixed "${GRYPE_ONLY_FIXED}" true false
+          # Empty turns the window off; otherwise a whole number of days
+          if [[ ! "${GRYPE_REMEDIATION_WINDOW_DAYS}" =~ ^[0-9]*$ ]]; then
+            invalid grype_remediation_window_days \
+              "${GRYPE_REMEDIATION_WINDOW_DAYS}"
+          fi
+          # Empty sets no floor; otherwise a real calendar date, which
+          # the shape alone cannot prove, so GNU date reads it back.
+          # Whether it lies in the future is left to the action.
+          if [ -n "${GRYPE_REMEDIATION_WINDOW_START}" ]; then
+            iso_date='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+            if [[ ! "${GRYPE_REMEDIATION_WINDOW_START}" =~ ${iso_date} ]] \
+              || [ "$(date -u -d "${GRYPE_REMEDIATION_WINDOW_START}" \
+                +%Y-%m-%d 2>/dev/null)" \
+                != "${GRYPE_REMEDIATION_WINDOW_START}" ]; then
+              invalid grype_remediation_window_start \
+                "${GRYPE_REMEDIATION_WINDOW_START}"
+            fi
+          fi
+          exit "${errors}"
 
       - name: 'Require Gerrit project, branch and URL'
         if: inputs.gerrit_refspec != ''
@@ -1019,6 +1119,16 @@ jobs:
         with:
           sbom: 'sbom-cyclonedx.json'
           fail-on: ${{ inputs.grype_fail_on }}
+          only-fixed: ${{ inputs.grype_only_fixed }}
+          dependency-policy: ${{ inputs.grype_dependency_policy }}
+          transitive-fail-on: ${{ inputs.grype_transitive_fail_on }}
+          # A release always gates: no dependency-change detection runs
+          # in this workflow, and no manifest is read
+          gate-when: 'always'
+          # yamllint disable-line rule:line-length
+          remediation-window-days: ${{ inputs.grype_remediation_window_days }}
+          # yamllint disable-line rule:line-length
+          remediation-window-start: ${{ inputs.grype_remediation_window_start }}
           # yamllint disable-line rule:line-length
           permit-fail: ${{ inputs.grype_permit_fail || vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
           artifact-name: grype-scan-results${{ inputs.artifact_suffix }}
