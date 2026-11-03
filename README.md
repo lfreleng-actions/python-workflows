@@ -138,6 +138,30 @@ is not the mirror commit, that metadata describes the caller rather than
 the source scanned. This does not touch the cryptographic findings themselves.
 Fixing it needs explicit metadata inputs on `cbom-action`.
 
+### Artefact names
+
+The SBOM, Grype and CBOM jobs upload `sbom-files`, `grype-scan-results`
+and `cbom-files`; the multi-arch variants add `-<arch>` to the first
+two. Artefact names are unique per workflow run, so a caller that
+invokes one of these workflows more than once in a run (from a matrix,
+for example) must give each call its own `artifact_suffix`. Without
+one, every call uploads under the same names, and the Grype job can
+download and scan another call's SBOM.
+
+The workflow inserts the suffix verbatim and adds no separator, so pass
+the leading hyphen yourself: `artifact_suffix: '-${{ matrix.name }}'`
+yields `sbom-files-<name>`, `grype-scan-results-<name>` and
+`cbom-files-<name>` (`sbom-files-<name>-<arch>` on multi-arch). The
+default, empty, leaves the names unchanged.
+
+<!-- markdownlint-disable MD013 -->
+
+| Name              | Type   | Default | Description                                                                         |
+| ----------------- | ------ | ------- | ----------------------------------------------------------------------------------- |
+| `artifact_suffix` | string | `''`    | Suffix for the SBOM, Grype and CBOM artefact names, e.g. `-<leg>`; `[A-Za-z0-9._-]` |
+
+<!-- markdownlint-enable MD013 -->
+
 ## Usage
 
 Copy a template from [`examples/`](examples/) into your project's
