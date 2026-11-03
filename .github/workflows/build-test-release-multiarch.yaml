@@ -12,15 +12,18 @@
 # PyPI publishing is performed by the CALLER (see the attach-artefacts
 # note below):
 #   tag-validate -> python-metadata -> python-build (matrixed) ->
-#   { python-audit (matrixed) | sbom -> grype (per-arch) } ->
+#   { python-audit (matrixed) | sbom (per-arch, scans in-leg) } ->
 #   python-tests -> attach-artefacts -> promote-release
 #   python-build -> cbom
 #
 # Each matrixed build/test/audit job runs on a 2-D matrix of architecture
 # (from the `runners` input) crossed with Python version (discovered by
-# the python-metadata job). The SBOM and Grype jobs run per-arch only,
+# the python-metadata job). The SBOM + Grype job runs per-arch only,
 # because native dependency trees differ per architecture but not per
-# Python version. The cbom job is not matrixed at all: it statically
+# Python version, and scans the SBOM in the leg that generated it, so
+# no job downloads an SBOM artefact that another call of this workflow
+# in the same run may have replaced. The cbom job is not matrixed at
+# all: it statically
 # scans the source tree, which varies by neither axis. It hangs off
 # python-build on its own edge because it appears in no other job's
 # needs, gating neither python-tests nor the release, and it cannot
@@ -1049,14 +1052,14 @@ jobs:
   # python-metadata to surface every failure on a PR.)
   python-tests:
     name: 'Tests ${{ matrix.target.arch }} py${{ matrix.python-version }}'
-    # Deferred until the audit operations (python-audit and the SBOM ->
-    # Grype scan) pass, so the expensive test matrix is skipped on audit
-    # failure. Disabled audit/SBOM jobs report 'skipped' and do not
-    # block the tests, but the direct sbom check keeps a genuine SBOM
-    # failure (which also skips Grype) gating the tests as before.
-    needs: ['python-metadata', 'python-build', 'python-audit', 'sbom', 'grype']
+    # Deferred until the audit operations (python-audit and the SBOM
+    # job, whose in-leg Grype scan fails it) pass, so the expensive
+    # test matrix is skipped on audit failure. Disabled audit/SBOM jobs
+    # report 'skipped' and do not block the tests, but the direct sbom
+    # check keeps a genuine SBOM or Grype failure gating the tests.
+    needs: ['python-metadata', 'python-build', 'python-audit', 'sbom']
     # yamllint disable-line rule:line-length
-    if: ${{ !cancelled() && needs.python-build.result == 'success' && (needs.python-audit.result == 'success' || (needs.python-audit.result == 'skipped' && !inputs.audit_enabled)) && (needs.sbom.result == 'success' || (needs.sbom.result == 'skipped' && !inputs.sbom_enabled)) && (needs.grype.result == 'success' || (needs.grype.result == 'skipped' && (!inputs.grype_enabled || !inputs.sbom_enabled))) && inputs.tests_enabled }}
+    if: ${{ !cancelled() && needs.python-build.result == 'success' && (needs.python-audit.result == 'success' || (needs.python-audit.result == 'skipped' && !inputs.audit_enabled)) && (needs.sbom.result == 'success' || (needs.sbom.result == 'skipped' && !inputs.sbom_enabled)) && inputs.tests_enabled }}
     strategy:
       fail-fast: false
       matrix:
@@ -1387,61 +1390,20 @@ jobs:
             echo "Tool used: ${SBOM_DEPENDENCY_MANAGER}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  grype:
-    name: 'Grype ${{ matrix.target.arch }}'
-    needs: 'sbom'
-    # yamllint disable-line rule:line-length
-    if: ${{ !cancelled() && needs.sbom.result == 'success' && inputs.grype_enabled }}
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJson(inputs.runners) }}
-    # Each SBOM is architecture-specific (native dependency trees can
-    # differ per arch), but scanning a CycloneDX JSON SBOM does not require
-    # the target architecture, so the per-arch scans all run on a standard
-    # x64 runner.
-    runs-on: 'ubuntu-latest'
-    permissions:
-      contents: read
-    timeout-minutes: ${{ inputs.audit_timeout_minutes }}
-    steps:
-      - name: 'Load egress allow-list'
-        # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
-        with:
-          config: ${{ inputs.harden_runner_allowlist }}
-          # yamllint disable-line rule:line-length
-          supplemental_config: ${{ inputs.harden_runner_supplemental_allowlist }}
-          # A caller naming a list depends on it, so its absence fails
-          # here rather than at the first blocked connection.
-          # yamllint disable-line rule:line-length
-          supplemental_required: ${{ inputs.harden_runner_supplemental_allowlist != '' && 'true' || 'false' }}
-          # yamllint disable-line rule:line-length
-          supplemental_unpinned: ${{ inputs.harden_runner_supplemental_unpinned && 'true' || 'false' }}
-          extra_endpoints: ${{ inputs.harden_runner_extra_endpoints }}
-          allow_list_summary: 'false'
-      - name: 'Harden runner'
-        # yamllint disable-line rule:line-length
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
-        with:
-          # yamllint disable-line rule:line-length
-          egress-policy: ${{ inputs.harden_runner_egress == 'audit' && 'audit' || 'block' }}
-          allowed-endpoints: >
-            ${{ env.CONNECTION_ALLOW_LIST }}
-
-      - name: 'Download SBOM (${{ matrix.target.arch }})'
-        # yamllint disable-line rule:line-length
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
-        with:
-          # yamllint disable-line rule:line-length
-          name: sbom-files${{ inputs.artifact_suffix }}-${{ matrix.target.arch }}
-
+      # Scans the SBOM this leg generated, in the same job, so the
+      # scan is bound to the SBOM by construction. A matrix job cannot
+      # export one artefact ID per leg, so a separate Grype job would
+      # have to download by name, and when a caller runs this workflow
+      # more than once in a run without a distinct artifact_suffix a
+      # lookup by name can hand it another call's SBOM.
+      #
       # The grype_permit_fail input (or, when unset, the NO_BLOCK_AUDIT_FAIL
       # repository variable) disables failure propagation so pull requests
       # can proceed when blocked by newly discovered CVEs in transitive
       # dependencies.
       - name: 'Grype audit SBOM'
         id: grype-audit
+        if: ${{ inputs.grype_enabled }}
         # yamllint disable-line rule:line-length
         uses: lfreleng-actions/grype-scan-action@5c81b23afb2ea771b2d247807a12d90783328675  # v0.5.0
         with:
@@ -1642,13 +1604,11 @@ jobs:
       - 'python-tests'
       - 'python-audit'
       - 'sbom'
-      - 'grype'
-    # tests/audit/sbom skip when their enable toggles are false (and
-    # grype skips when the SBOM does); tolerate skipped results, but
-    # never a failure (a failed test run, audit, SBOM or Grype scan
-    # blocks the release here)
+    # tests/audit/sbom skip when their enable toggles are false;
+    # tolerate skipped results, but never a failure (a failed test run,
+    # audit, SBOM or in-leg Grype scan blocks the release here)
     # yamllint disable-line rule:line-length
-    if: ${{ !cancelled() && needs.python-build.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.python-tests.result) && (needs.python-audit.result == 'success' || (needs.python-audit.result == 'skipped' && !inputs.audit_enabled)) && (needs.sbom.result == 'success' || (needs.sbom.result == 'skipped' && !inputs.sbom_enabled)) && (needs.grype.result == 'success' || (needs.grype.result == 'skipped' && (!inputs.grype_enabled || !inputs.sbom_enabled))) }}
+    if: ${{ !cancelled() && needs.python-build.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.python-tests.result) && (needs.python-audit.result == 'success' || (needs.python-audit.result == 'skipped' && !inputs.audit_enabled)) && (needs.sbom.result == 'success' || (needs.sbom.result == 'skipped' && !inputs.sbom_enabled)) }}
     permissions:
       contents: write  # IMPORTANT: needed to edit release, attach artefacts
     timeout-minutes: 5

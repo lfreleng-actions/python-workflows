@@ -45,8 +45,8 @@ permissions: {}
 jobs:
   # Standard single-arch consumers, fanned out in parallel via a matrix.
   # Each leg passes its own artifact_suffix: both call build-test.yaml
-  # in the same run, and unsuffixed artefact names would collide, so a
-  # leg's Grype job could download and scan the other leg's SBOM.
+  # in the same run, and unsuffixed artefact names would collide, so
+  # the leg whose upload the other hid would fail its Grype download.
   standard:
     name: 'Standard (${{ matrix.name }})'
     strategy:
@@ -110,8 +110,9 @@ jobs:
   # default, and the comparison needs the parent), the sidecar's path
   # through the artefact, the policy inputs with their defaults and
   # pass-throughs, and the shared gerrit-validate step, which it
-  # extracts and drives against every value it must reject. The same
-  # script runs as a pre-commit hook.
+  # extracts and drives against every value it must reject.
+  # tests/test-grype-sbom-binding.sh proves the scan reads its own
+  # call's artefact. Both scripts run as pre-commit hooks.
   grype-gate-wiring:
     name: 'Test: Grype gate wiring'
     runs-on: ubuntu-latest
@@ -145,6 +146,22 @@ jobs:
             exit 1
           fi
           echo "Grype gate wiring correct ✅" >> "$GITHUB_STEP_SUMMARY"
+
+      # The sidecar above decides whether Grype blocks, so the scan has
+      # to read its own call's artefact: by the upload's ID, or in the
+      # leg that wrote it. A download by name would hand a call that
+      # shares a name with a later one the other call's SBOM and
+      # sidecar. The standard legs pass distinct suffixes, so a run
+      # cannot show this; the script reads it from the workflow files.
+      - name: 'Assert the Grype scan is bound to the SBOM upload'
+        shell: bash
+        run: |
+          # Assert the Grype scan is bound to the SBOM upload
+          if ! bash tests/test-grype-sbom-binding.sh; then
+            echo "Grype scan not bound to its SBOM ❌" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Grype scan bound to its SBOM ✅" >> "$GITHUB_STEP_SUMMARY"
 
   # Proves the unresolved path from the run itself, not just that the
   # job graph went green. Each dependencies-changed leg builds another

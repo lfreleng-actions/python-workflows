@@ -193,3 +193,18 @@ repos:
         pass_filenames: false
         # yamllint disable-line rule:line-length
         files: '^(\.github/workflows/[^/]+\.yaml|tests/test-grype-gate-inputs\.sh)$'
+
+  # Binding check between the SBOM upload and the Grype scan: the
+  # single-arch grype jobs download by the sbom job's artifact-id
+  # output, never by name, and the multi-arch legs scan in place.
+  # Same shape as the hooks above.
+  - repo: local
+    hooks:
+      - id: grype-sbom-binding
+        name: Grype scan to SBOM upload binding check
+        entry: bash tests/test-grype-sbom-binding.sh
+        language: python
+        additional_dependencies: ['pyyaml==6.0.2']
+        pass_filenames: false
+        # yamllint disable-line rule:line-length
+        files: '^(\.github/workflows/[^/]+\.yaml|tests/test-grype-sbom-binding\.sh)$'
