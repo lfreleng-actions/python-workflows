@@ -147,8 +147,16 @@ and `cbom-files`; the multi-arch variants add `-<arch>` to the first
 two. Artefact names are unique per workflow run, so a caller that
 invokes one of these workflows more than once in a run (from a matrix,
 for example) must give each call its own `artifact_suffix`. Without
-one, every call uploads under the same names, and the Grype job can
-download and scan another call's SBOM.
+one, every call uploads under the same names, and the newest upload
+hides the earlier ones. The Grype scan never reads another call's
+SBOM: the single-arch `grype` job downloads the artefact by the ID its
+own `sbom` job's upload returned, and the multi-arch legs scan the SBOM
+in the job that generated it. A call whose artefact name a later call
+reused fails its download instead, and the `grype` job's
+`Explain SBOM download failure` step says so; the fix is a distinct
+`artifact_suffix` per call. A `sbom` job that uploaded nothing exports
+no ID, and the `grype` job's `Require SBOM artefact ID` step fails
+before the download rather than fetching every artefact in the run.
 
 The workflow inserts the suffix verbatim and adds no separator, so pass
 the leading hyphen yourself: `artifact_suffix: '-${{ matrix.name }}'`
@@ -446,8 +454,10 @@ run's jobs and SBOM artefacts to prove that it did and that no leg
 uploaded a sidecar. The
 `grype-gate-wiring` job runs `tests/test-grype-gate-inputs.sh`, which
 checks the Grype gate wiring in all four workflows and drives the shared
-input validation step against the values it must reject; the same script
-runs as a pre-commit hook.
+input validation step against the values it must reject, and
+`tests/test-grype-sbom-binding.sh`, which fails if any Grype scan reads
+an SBOM artefact selected by name rather than its own call's upload;
+both scripts run as pre-commit hooks.
 
 ## Design
 

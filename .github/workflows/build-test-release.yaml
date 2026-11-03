@@ -974,6 +974,11 @@ jobs:
     timeout-minutes: ${{ inputs.audit_timeout_minutes }}
     permissions:
       contents: read
+    # The grype job downloads this job's upload by this ID, never by
+    # name, so another call of this workflow in the same run cannot
+    # hand it a different SBOM
+    outputs:
+      sbom_artifact_id: ${{ steps.upload-sbom.outputs.artifact-id }}
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
@@ -1046,6 +1051,7 @@ jobs:
           sbom_format: ${{ inputs.sbom_format == 'xml' && 'both' || inputs.sbom_format }}
 
       - name: 'Upload SBOM artifacts'
+        id: upload-sbom
         # yamllint disable-line rule:line-length
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
@@ -1102,11 +1108,71 @@ jobs:
           allowed-endpoints: >
             ${{ env.CONNECTION_ALLOW_LIST }}
 
+      # download-artifact given neither a name nor an ID downloads
+      # every artefact in the run, so an empty ID would undo the
+      # binding below rather than fail it. The ID is empty when the
+      # sbom job's upload found no files (it warns rather than fails)
+      # or when GitHub withheld the job output; stop here either way
+      - name: 'Require SBOM artefact ID'
+        id: require-sbom-artifact-id
+        shell: bash
+        env:
+          ARTIFACT_NAME: sbom-files${{ inputs.artifact_suffix }}
+          ARTIFACT_ID: ${{ needs.sbom.outputs.sbom_artifact_id }}
+        run: |
+          # Require SBOM artefact ID
+          if [ -n "${ARTIFACT_ID}" ]; then
+            echo "SBOM artefact '${ARTIFACT_NAME}' has ID ${ARTIFACT_ID}"
+            exit 0
+          fi
+          {
+            echo "## SBOM download failed"
+            echo ""
+            echo "The sbom job exported no artefact ID for" \
+              "'${ARTIFACT_NAME}', so there is no SBOM this job can" \
+              "scan; see its 'Upload SBOM artifacts' step. Downloading" \
+              "without an ID would fetch every artefact in the run" \
+              "instead of this call's SBOM."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::error::SBOM artefact '${ARTIFACT_NAME}' has no ID;" \
+            "the sbom job uploaded nothing or withheld the output"
+          exit 1
+
       - name: 'Download SBOM artefact'
+        id: download-sbom
         # yamllint disable-line rule:line-length
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          name: sbom-files${{ inputs.artifact_suffix }}
+          # By the ID the sbom job's upload returned, not by name: a
+          # caller that invokes this workflow more than once in a run
+          # without a distinct artifact_suffix uploads every call's
+          # SBOM under one name, and a lookup by name could hand this
+          # job another call's SBOM
+          artifact-ids: ${{ needs.sbom.outputs.sbom_artifact_id }}
+
+      # download-artifact resolves an ID among the newest artefact of
+      # each name, so when a later call in the run reused this call's
+      # artefact name the step fails rather than reading the other
+      # call's SBOM. Its own error names the ID alone; say what it means
+      - name: 'Explain SBOM download failure'
+        if: ${{ failure() && steps.download-sbom.outcome == 'failure' }}
+        shell: bash
+        env:
+          ARTIFACT_NAME: sbom-files${{ inputs.artifact_suffix }}
+          ARTIFACT_ID: ${{ needs.sbom.outputs.sbom_artifact_id }}
+        run: |
+          # Explain SBOM download failure
+          {
+            echo "## SBOM download failed"
+            echo ""
+            echo "Artefact ${ARTIFACT_ID} ('${ARTIFACT_NAME}') is the" \
+              "SBOM this call's sbom job uploaded. When the step" \
+              "above found no artefact with that ID, a later call of" \
+              "this workflow in the same run reused the name and hid" \
+              "it; give each call its own artifact_suffix."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::error::SBOM artefact '${ARTIFACT_NAME}'" \
+            "(ID ${ARTIFACT_ID}) could not be downloaded"
 
       # The grype_permit_fail input (or, when unset, the NO_BLOCK_AUDIT_FAIL
       # repository variable) disables failure propagation so pull requests
