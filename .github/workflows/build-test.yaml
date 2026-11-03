@@ -618,6 +618,15 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+          # Commits and trees only; blobs are fetched on demand. Public
+          # repositories only: without persisted credentials a private
+          # repository cannot fetch a blob later, and a payload with no
+          # repository object (schedule) keeps the full clone. toJSON
+          # keeps an absent value ('null') apart from false: '==' would
+          # coerce both to 0 and enable the filter.
+          filter: >-
+            ${{ toJSON(github.event.repository.private) == 'false'
+            && 'blob:none' || '' }}
           persist-credentials: false
 
       - name: 'Gather repository metadata'
