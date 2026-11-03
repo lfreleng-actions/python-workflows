@@ -233,6 +233,39 @@ release verdict, and grype-scan-action still reports the window.
 [grype-scan-action]: https://github.com/lfreleng-actions/grype-scan-action
 [dependency-change-action]: https://github.com/lfreleng-actions/dependency-change-action
 
+### Repository metadata
+
+The `repository-metadata` job needs the full commit history of every
+branch to detect changed files, but not their contents. In a public
+repository its checkout keeps `fetch-depth: 0` and adds
+`filter: 'blob:none'`, a partial clone: git fetches commits and trees
+for every ref and defers file contents until something reads them. A
+repository with one heavy branch (a `gh-pages` branch of published
+reports, say) no longer sets the clone time for every run.
+
+The filter needs the event payload to mark the repository public
+explicitly (`toJSON(github.event.repository.private) == 'false'`).
+The checkout does not persist credentials, so a private repository
+could not fetch a blob that rename detection later needs; private
+repositories, and events whose payload carries no repository (such as
+`schedule`), keep the full clone. The comparison goes through `toJSON`
+because the expression `==` operator coerces both `null` and `false`
+to `0`, so a plain `== false` would also match a missing value.
+
+The job's timeout defaults to five minutes. A caller with an unusually
+slow repository can raise it with `metadata_timeout_minutes`, which
+takes the same 1-360 whole-minute range as the other timeout inputs.
+A private repository with a heavy branch, which keeps the full clone,
+is the likeliest caller to need it.
+
+<!-- markdownlint-disable MD013 -->
+
+| Name                       | Type   | Default | Description                               |
+| -------------------------- | ------ | ------- | ----------------------------------------- |
+| `metadata_timeout_minutes` | number | `5`     | Timeout for the `repository-metadata` job |
+
+<!-- markdownlint-enable MD013 -->
+
 ## Usage
 
 Copy a template from [`examples/`](examples/) into your project's

@@ -351,6 +351,13 @@ on:
         required: false
         type: number
         default: 15
+      metadata_timeout_minutes:
+        description: >-
+          Timeout (minutes) for the repository-metadata job. Raise it
+          for a repository whose full clone is slow to fetch.
+        required: false
+        type: number
+        default: 5
 
       # --- Runner hardening ---
       harden_runner_egress:
@@ -518,6 +525,7 @@ jobs:
           TEST_TIMEOUT: ${{ inputs.test_timeout_minutes }}
           AUDIT_TIMEOUT: ${{ inputs.audit_timeout_minutes }}
           CBOM_TIMEOUT: ${{ inputs.cbom_timeout_minutes }}
+          METADATA_TIMEOUT: ${{ inputs.metadata_timeout_minutes }}
         run: |
           # Require whole-minute timeouts in the range 1-360 (the
           # GitHub-hosted runner job cap). Values GitHub itself
@@ -530,7 +538,8 @@ jobs:
             "build_timeout_minutes=${BUILD_TIMEOUT}" \
             "test_timeout_minutes=${TEST_TIMEOUT}" \
             "audit_timeout_minutes=${AUDIT_TIMEOUT}" \
-            "cbom_timeout_minutes=${CBOM_TIMEOUT}"; do
+            "cbom_timeout_minutes=${CBOM_TIMEOUT}" \
+            "metadata_timeout_minutes=${METADATA_TIMEOUT}"; do
             name="${entry%%=*}"; value="${entry#*=}"
             if [[ ! "${value}" =~ ^[0-9]+$ ]] \
               || [ "${value}" -lt 1 ] || [ "${value}" -gt 360 ]; then
@@ -631,7 +640,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 5
+    timeout-minutes: ${{ inputs.metadata_timeout_minutes }}
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
@@ -676,6 +685,15 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+          # Commits and trees only; blobs are fetched on demand. Public
+          # repositories only: without persisted credentials a private
+          # repository cannot fetch a blob later, and a payload with no
+          # repository object (schedule) keeps the full clone. toJSON
+          # keeps an absent value ('null') apart from false: '==' would
+          # coerce both to 0 and enable the filter.
+          filter: >-
+            ${{ toJSON(github.event.repository.private) == 'false'
+            && 'blob:none' || '' }}
           persist-credentials: false
 
       - name: 'Gather repository metadata'
