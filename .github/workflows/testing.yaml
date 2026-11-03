@@ -15,6 +15,14 @@
 # branch defines. The standard targets are
 # checked out at their default/HEAD branch; the python-nss-ng leg is
 # pinned to the v1.2.0 release commit (see ref: below).
+#
+# The dependamerge and python-nss-ng legs run the dependencies-changed
+# Grype gate. Each builds another repository, which
+# dependency-change-action cannot compare against this pull request,
+# so the result is unresolved: no sidecar is written and the gate stays
+# on. grype-gate-assert proves that from the run, and
+# grype-gate-wiring reads the workflow files for the wiring no run can
+# show.
 name: 'Testing 🧪'
 
 # yamllint disable-line rule:truthy
@@ -40,15 +48,21 @@ jobs:
   # in the same run, and unsuffixed artefact names would collide, so a
   # leg's Grype job could download and scan the other leg's SBOM.
   standard:
-    name: 'Standard'
+    name: 'Standard (${{ matrix.name }})'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: dependamerge
+          # Another repository at its default branch, so the change
+          # cannot be resolved and the gate must stay on: this
+          # exercises the fail-closed path through the SBOM artefact
+          - name: 'dependamerge'
             repository: lfreleng-actions/dependamerge
-          - name: lftools-uv
+            grype_gate_when: 'dependencies-changed'
+          # Today's behaviour: detection never runs, no gate step
+          - name: 'lftools-uv'
             repository: lfreleng-actions/lftools-uv
+            grype_gate_when: 'always'
     permissions:
       contents: read
       pull-requests: read  # Reusable workflow reads PR metadata
@@ -56,6 +70,7 @@ jobs:
     with:
       repository: ${{ matrix.repository }}
       artifact_suffix: '-${{ matrix.name }}'
+      grype_gate_when: ${{ matrix.grype_gate_when }}
       # Exercise the allow-list inputs without granting anything new.
       # A same-organisation list may follow its default branch, and
       # 'lfreleng-actions//' resolves to the organisation list itself,
@@ -82,3 +97,232 @@ jobs:
       make: true
       make_args: 'deps-nss env-github-actions'
       setup_script: '.github/scripts/setup-nss.sh'
+      # A fixture at a pinned commit of another repository: unresolved,
+      # so each SBOM leg's in-leg Grype step keeps the gate on
+      grype_gate_when: 'dependencies-changed'
+
+  # The dependencies-changed gate trusts a sidecar that
+  # dependency-change-action writes beside the SBOM and
+  # grype-scan-action reads. The action's own suite proves what it
+  # writes; tests/test-grype-gate-inputs.sh proves the wiring around it
+  # in all four workflows: the pinned call and its condition, the
+  # checkout depth it needs (actions/checkout fetches one commit by
+  # default, and the comparison needs the parent), the sidecar's path
+  # through the artefact, the policy inputs with their defaults and
+  # pass-throughs, and the shared gerrit-validate step, which it
+  # extracts and drives against every value it must reject. The same
+  # script runs as a pre-commit hook.
+  grype-gate-wiring:
+    name: 'Test: Grype gate wiring'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: 'Load egress allow-list'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
+      - name: 'Harden runner'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 'Assert Grype gate wiring and input validation'
+        shell: bash
+        run: |
+          # Assert Grype gate wiring and input validation
+          if ! bash tests/test-grype-gate-inputs.sh; then
+            echo "Grype gate wiring incorrect ❌" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Grype gate wiring correct ✅" >> "$GITHUB_STEP_SUMMARY"
+
+  # Proves the unresolved path from the run itself, not just that the
+  # job graph went green. Each dependencies-changed leg builds another
+  # repository, which the action cannot compare against this pull
+  # request: it writes no sidecar, the SBOM upload succeeds without
+  # one, and the Grype step finds no manifest and keeps the gate on.
+  # Runs whatever the legs' verdicts, so a CVE in a consumer cannot
+  # hide these checks.
+  grype-gate-assert:
+    name: 'Test: Grype gate stays on when unresolved'
+    runs-on: ubuntu-latest
+    needs: ['standard', 'multiarch']
+    if: ${{ !cancelled() }}
+    permissions:
+      actions: read  # list this run's jobs and download its artefacts
+    timeout-minutes: 10
+    steps:
+      - name: 'Load egress allow-list'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
+      - name: 'Harden runner'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      # The steps below source this helper for their read-only listings,
+      # so one transient 5xx cannot fail the job. It buffers each
+      # attempt and prints only a complete one, so a page that failed
+      # mid-pagination is never half-printed; after the third failure
+      # it returns non-zero, having shown gh's own error each time.
+      - name: 'Define gh_api retry helper'
+        shell: bash
+        run: |
+          # Define gh_api retry helper
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/gh-api.sh" << 'EOF'
+          gh_api() {
+            local attempt delay out
+            for attempt in 1 2 3; do
+              if out="$(gh api "$@")"; then
+                printf '%s\n' "${out}"
+                return 0
+              fi
+              if [ "${attempt}" -eq 3 ]; then
+                return 1
+              fi
+              delay="$((attempt * 5))"
+              echo "::warning::gh api failed, attempt ${attempt} of 3;" \
+                "retrying in ${delay}s" >&2
+              sleep "${delay}"
+            done
+          }
+          EOF
+
+      # A called workflow's step outputs never reach the caller, so the
+      # Grype step's gate-active output is read from the step name that
+      # carries it ('Grype gate active: true'), which the jobs listing
+      # shows. The always leg must have skipped that step: its gate is
+      # on by construction, and the summary would say nothing new. A
+      # skipped step's name may stay unrendered, so only its conclusion
+      # is checked.
+      - name: 'Assert the gate stayed on where the change was unresolved'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          # Keep in step with the standard matrix names and the
+          # multiarch runners default. The in-leg Grype step of a
+          # multi-arch SBOM job runs in that job.
+          ARMED: |
+            Standard (dependamerge) / Grype Audit SBOM
+            Multi-Arch / SBOM x64
+            Multi-Arch / SBOM arm64
+          ALWAYS: |
+            Standard (lftools-uv) / Grype Audit SBOM
+        run: |
+          # Assert the gate stayed on where the change was unresolved
+          set -euo pipefail
+          status=0
+          fail() { echo "::error::$*"; status=1; }
+          # shellcheck source=/dev/null
+          . "${RUNNER_TEMP}/gh-api.sh"
+          api="repos/${REPOSITORY}/actions/runs/${RUN_ID}"
+          # One row per job: its name, verdict, and the name and verdict
+          # of its 'Grype gate active' step, or 'absent'. Small pages:
+          # each job carries its steps, and a page of 100 outruns the
+          # API gateway timeout and answers 502
+          jobs="$(gh_api --paginate "${api}/jobs?filter=latest&per_page=30" \
+            --jq '.jobs[] | [.name, (.conclusion // .status),
+              ([.steps[]? | select(.name | startswith("Grype gate active"))
+                | .name] | first // "absent"),
+              ([.steps[]? | select(.name | startswith("Grype gate active"))
+                | (.conclusion // .status)] | first // "absent")]
+              | @tsv')"
+          # $1 job name, $2 expected step name or '*', $3 expected step
+          # conclusion
+          check() {
+            local row result name conclusion
+            row="$(awk -F'\t' -v n="$1" '$1 == n' <<< "${jobs}")"
+            result="$(cut -f2 <<< "${row}")"
+            name="$(cut -f3 <<< "${row}")"
+            conclusion="$(cut -f4 <<< "${row}")"
+            case "${result}" in
+              success|failure) ;;
+              '') fail "$1: no such job in this run"; return ;;
+              *) fail "$1: ${result//$'\n'/ }, expected it to run"; return ;;
+            esac
+            if [ "${conclusion}" != "$3" ]; then
+              fail "$1: gate step '${name}' ${conclusion//$'\n'/ }," \
+                "expected $3"
+            elif [ "$2" != '*' ] && [ "${name}" != "$2" ]; then
+              fail "$1: gate step named '${name//$'\n'/ }', expected '$2'"
+            else
+              echo "$1: ${result}; gate step '${name}' ${conclusion} ✅"
+            fi
+          }
+          while read -r job; do
+            if [ -n "${job}" ]; then
+              check "${job}" 'Grype gate active: true' success
+            fi
+          done <<< "${ARMED}"
+          while read -r job; do
+            if [ -n "${job}" ]; then
+              check "${job}" '*' skipped
+            fi
+          done <<< "${ALWAYS}"
+          exit "${status}"
+
+      # The unresolved legs upload no sidecar, and the always leg never
+      # ran detection, so no SBOM artefact in this run may carry one. A
+      # sidecar here would mean a leg vouched for a change it could not
+      # see, which is the failure the fail-closed contract rules out.
+      - name: 'Assert no SBOM artefact carries a sidecar'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          # Keep in step with the legs above: each standard leg uploads
+          # sbom-files-<artifact_suffix>, the multiarch legs
+          # sbom-files-<arch>
+          # yamllint disable-line rule:line-length
+          FAMILIES: 'sbom-files-dependamerge sbom-files-lftools-uv sbom-files-x64 sbom-files-arm64'
+        run: |
+          # Assert no SBOM artefact carries a sidecar
+          set -euo pipefail
+          status=0
+          fail() { echo "::error::$*"; status=1; }
+          # shellcheck source=/dev/null
+          . "${RUNNER_TEMP}/gh-api.sh"
+          api="repos/${REPOSITORY}/actions/runs/${RUN_ID}"
+          artefacts="$(gh_api --paginate "${api}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired | not)
+              | select(.name | test("^sbom-files(-|$)"))
+              | "\(.name) \(.id)"')"
+          for family in ${FAMILIES}; do
+            if ! grep -q "^${family} " <<< "${artefacts}"; then
+              fail "No ${family} artefact in this run"
+            fi
+          done
+          while read -r name id; do
+            [ -n "${name}" ] || continue
+            dir="${RUNNER_TEMP}/${name}/${id}"
+            mkdir -p "${dir}"
+            gh api "repos/${REPOSITORY}/actions/artifacts/${id}/zip" \
+              > "${dir}.zip"
+            unzip -q "${dir}.zip" -d "${dir}"
+            if [ ! -f "${dir}/sbom-cyclonedx.json" ]; then
+              fail "${name} ${id} holds no sbom-cyclonedx.json"
+            elif [ -e "${dir}/dependency-change.json" ]; then
+              fail "${name} ${id} carries a sidecar:" \
+                "$(tr -d '\r\n' < "${dir}/dependency-change.json")"
+            else
+              echo "${name} ${id}: SBOM present, no sidecar ✅"
+            fi
+          done <<< "${artefacts}"
+          exit "${status}"

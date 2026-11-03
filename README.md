@@ -162,6 +162,77 @@ default, empty, leaves the names unchanged.
 
 <!-- markdownlint-enable MD013 -->
 
+### Grype gating
+
+The `grype` job (the in-leg Grype step, in the multi-arch variants)
+scans the SBOM with [grype-scan-action][grype-scan-action] and fails
+on a match at or above `grype_fail_on`. Six inputs shape which matches
+count and when the verdict gates:
+
+<!-- markdownlint-disable MD013 -->
+
+| Name                             | Type    | Default    | Description                                                                                                                    |
+| -------------------------------- | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `grype_gate_when`                | string  | `always`   | `always` gates every run; `dependencies-changed` gates a change that touches a dependency file (pull request flows; see below) |
+| `grype_dependency_policy`        | string  | `declared` | `declared` applies `grype_fail_on` to direct dependencies and `grype_transitive_fail_on` to the rest; `all` treats both alike  |
+| `grype_transitive_fail_on`       | string  | `critical` | Severity that fails on a transitive dependency under the `declared` policy (`negligible` … `critical`, or `none`)              |
+| `grype_only_fixed`               | boolean | `true`     | Count matches with a fix available; a match no upgrade can clear appears in the report but never gates                         |
+| `grype_remediation_window_days`  | string  | `''`       | On an unarmed `dependencies-changed` run, days after a match's fix date during which it warns instead of fails; empty disables |
+| `grype_remediation_window_start` | string  | `''`       | Optional `YYYY-MM-DD` floor for the window clock: it starts at the later of this date and the fix date                         |
+
+<!-- markdownlint-enable MD013 -->
+
+`grype_only_fixed` defaults on because a match without a fix leaves the
+author nothing to merge: it stays visible in the job summary and the
+uploaded report, and the gate falls to the matches an upgrade can
+clear. Set it `false` to gate on every match. Under
+`dependency-policy: declared`, grype-scan-action classifies a match as
+direct or transitive from the SBOM's dependency graph when the SBOM
+names a root component; when it does not, every match counts as
+declared and `grype_fail_on` applies to each. The gate then
+relies on `grype_gate_when` for relief, not on the policy.
+
+With `grype_gate_when: 'dependencies-changed'`, the `sbom` job runs
+[dependency-change-action][dependency-change-action] before it
+generates the SBOM and uploads the result as `dependency-change.json`
+beside the SBOM files. The Grype step reads that manifest and gates
+when it reports a change to a dependency file, or when the manifest
+is absent or unresolved: the action fails closed, so a comparison it cannot make
+(a `repository` or `ref` input naming another tree, a shallow checkout,
+a symlinked dependency file) keeps the gate on. The action's README
+documents the detection rules, the `python` ecosystem preset, the
+base-commit rules and the fail-closed contract. A step named
+`Grype gate active: <true|false>` in the Grype job's log shows the
+outcome. The `gerrit-validate` job rejects a `grype_gate_when` value
+outside `always` and `dependencies-changed`, a policy or severity
+outside the action's vocabulary, and a window whose days value is not an
+integer or whose start is not a real calendar date.
+
+The remediation window bounds the leniency of an unarmed run in time.
+It applies to one kind of run: `grype_gate_when` is
+`dependencies-changed`, the manifest resolved, and the change left
+every dependency file alone. Every other run, including an `always`
+run and an unresolved one, ignores the window and gates. Within an
+unarmed run the clock is per match: a match with a fix stays a warning
+for `grype_remediation_window_days` days after that fix became
+available, then gates as in an armed run. A match with no fix never
+gates this way, and a fixed match with no recorded fix date gates at
+once unless the caller gives `grype_remediation_window_start`. That
+start is an optional floor, not a required opening date: the clock
+starts at the later of the fix date and the start date, so a caller
+adopting the window can name the adoption day and give an existing
+backlog the full window instead of gating on it at once. It must not
+be in the future; grype-scan-action enforces that.
+
+The release variants take every input but `grype_gate_when`: a release
+scans everything it ships, so the gate is always on. They accept the
+remediation window for parity with the pull request flows so a caller
+can set one block of `grype_*` inputs for both; it has no effect on a
+release verdict, and grype-scan-action still reports the window.
+
+[grype-scan-action]: https://github.com/lfreleng-actions/grype-scan-action
+[dependency-change-action]: https://github.com/lfreleng-actions/dependency-change-action
+
 ## Usage
 
 Copy a template from [`examples/`](examples/) into your project's
@@ -365,7 +436,16 @@ and name the caller's workflow, not this one.
 [`.github/workflows/testing.yaml`](.github/workflows/testing.yaml) exercises
 the reusable workflows against three large downstream consumers
 (`dependamerge`, `lftools-uv` and `python-nss-ng`) in parallel, validating
-the workflows end-to-end on every pull request.
+the workflows end-to-end on every pull request. The `dependamerge` and
+`python-nss-ng` legs run with `grype_gate_when: 'dependencies-changed'`;
+each builds another repository, so the action cannot resolve the
+change and the gate must stay on. The `grype-gate-assert` job reads the
+run's jobs and SBOM artefacts to prove that it did and that no leg
+uploaded a sidecar. The
+`grype-gate-wiring` job runs `tests/test-grype-gate-inputs.sh`, which
+checks the Grype gate wiring in all four workflows and drives the shared
+input validation step against the values it must reject; the same script
+runs as a pre-commit hook.
 
 ## Design
 

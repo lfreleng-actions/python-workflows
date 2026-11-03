@@ -177,3 +177,19 @@ repos:
         pass_filenames: false
         # yamllint disable-line rule:line-length
         files: '^(\.github/workflows/[^/]+\.yaml|tests/test-harden-runner-inputs\.sh)$'
+
+  # Wiring check for the Grype gate policy inputs and the
+  # dependency-change signal: the pinned detection step and its
+  # checkout depth, the sidecar's path to grype-scan-action, the policy
+  # inputs and their shared gerrit-validate step. Same shape as the
+  # hook above.
+  - repo: local
+    hooks:
+      - id: grype-gate-inputs
+        name: Grype gate policy and dependency-change wiring check
+        entry: bash tests/test-grype-gate-inputs.sh
+        language: python
+        additional_dependencies: ['pyyaml==6.0.2']
+        pass_filenames: false
+        # yamllint disable-line rule:line-length
+        files: '^(\.github/workflows/[^/]+\.yaml|tests/test-grype-gate-inputs\.sh)$'
