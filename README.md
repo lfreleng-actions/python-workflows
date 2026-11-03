@@ -71,7 +71,9 @@ complete caller.
 [trusted-publishers]: https://docs.pypi.org/trusted-publishers/
 
 The multi-arch variants add a `python-metadata` job and fan the build,
-test and audit jobs across an architecture matrix. The primary build
+test and audit jobs across an architecture matrix. Each architecture's
+`sbom` job also runs the Grype scan over the SBOM it generated, in
+place of the single-arch variants' separate `grype` job. The primary build
 leg (the first `runners` entry with the first Python version) honours
 `build_formats` and builds the single sdist; every other leg builds
 wheels and drops any sdist before uploading, which covers `tox_build`
