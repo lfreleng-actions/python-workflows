@@ -252,6 +252,20 @@ repositories, and events whose payload carries no repository (such as
 because the expression `==` operator coerces both `null` and `false`
 to `0`, so a plain `== false` would also match a missing value.
 
+The job's timeout defaults to five minutes. A caller with an unusually
+slow repository can raise it with `metadata_timeout_minutes`, which
+takes the same 1-360 whole-minute range as the other timeout inputs.
+A private repository with a heavy branch, which keeps the full clone,
+is the likeliest caller to need it.
+
+<!-- markdownlint-disable MD013 -->
+
+| Name                       | Type   | Default | Description                               |
+| -------------------------- | ------ | ------- | ----------------------------------------- |
+| `metadata_timeout_minutes` | number | `5`     | Timeout for the `repository-metadata` job |
+
+<!-- markdownlint-enable MD013 -->
+
 ## Usage
 
 Copy a template from [`examples/`](examples/) into your project's
