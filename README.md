@@ -176,13 +176,16 @@ default, empty, leaves the names unchanged.
 
 The `grype` job (the in-leg Grype step, in the multi-arch variants)
 scans the SBOM with [grype-scan-action][grype-scan-action] and fails
-on a match at or above `grype_fail_on`. Eight inputs shape which matches
-count and when the verdict gates:
+on a match at or above `grype_fail_on`. These inputs shape whether the
+scan runs, which matches count and when the verdict gates:
 
 <!-- markdownlint-disable MD013 -->
 
 | Name                             | Type    | Default    | Description                                                                                                                                         |
 | -------------------------------- | ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grype_enabled`                  | boolean | `true`     | Run the scan; `false` skips it but keeps the SBOM (`sbom_enabled: false` skips both)                                                                |
+| `grype_fail_on`                  | string  | `medium`   | Lowest severity that fails the scan (`negligible` … `critical`), or `none` to report without gating                                                 |
+| `grype_permit_fail`              | boolean | `false`    | Report findings and pass the job; when `false`, the `NO_BLOCK_AUDIT_FAIL` repository variable can still permit failures                             |
 | `grype_gate_when`                | string  | `always`   | `always` gates every run; `dependencies-changed` gates a change that touches a dependency file (pull request flows; see below)                      |
 | `grype_dependency_ecosystems`    | string  | `''`       | Comma-separated presets the `dependencies-changed` verdict watches (`node`, `python`, `go`, `maven`, `gradle`, `rust`, `docker`); empty watches all |
 | `grype_dependency_patterns`      | string  | `''`       | Extra dependency-file patterns, one per line, added to the presets                                                                                  |
@@ -191,6 +194,7 @@ count and when the verdict gates:
 | `grype_only_fixed`               | boolean | `true`     | Count matches with a fix available; a match no upgrade can clear appears in the report but never gates                                              |
 | `grype_remediation_window_days`  | string  | `''`       | On an unarmed `dependencies-changed` run, days after a match's fix date during which it warns instead of fails; empty disables                      |
 | `grype_remediation_window_start` | string  | `''`       | Optional `YYYY-MM-DD` floor for the window clock: it starts at the later of this date and the fix date                                              |
+| `grype_bypass_repository`        | string  | `''`       | Repository, as `owner/name`, holding the approved CVE bypass issues the scan honours; empty uses the calling repository                             |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -224,8 +228,9 @@ alone. A step named `Grype gate active: <true|false>` in the Grype
 job's log shows the outcome. The `gerrit-validate` job rejects a
 `grype_gate_when` value outside `always` and `dependencies-changed`,
 an ecosystem outside the presets, a policy or severity outside the
-action's vocabulary, and a window whose days value is not an integer
-or whose start is not a real calendar date.
+action's vocabulary, a window whose days value is not an integer or
+whose start is not a real calendar date, and a bypass repository that
+is not `owner/name`.
 
 The remediation window bounds the leniency of an unarmed run in time.
 It applies to one kind of run: `grype_gate_when` is
@@ -245,10 +250,15 @@ be in the future; grype-scan-action enforces that.
 
 The release variants take every input but `grype_gate_when` and the
 two detection inputs: a release scans everything it ships, so the gate
-is always on. They accept the
-remediation window for parity with the pull request flows so a caller
-can set one block of `grype_*` inputs for both; it has no effect on a
-release verdict, and grype-scan-action still reports the window.
+is always on. They accept the remediation window for parity with the
+pull request flows so a caller can set one block of `grype_*` inputs
+for both; it has no effect on a release verdict, and grype-scan-action
+still reports the window.
+
+`grype_bypass_repository` points every scan, release scans included, at
+one shared list of approved bypass issues, such as an organisation's
+`.github` repository. The grype-scan-action README documents how a
+maintainer approves a bypass issue and when it expires.
 
 [grype-scan-action]: https://github.com/lfreleng-actions/grype-scan-action
 [repository-metadata-action-deps]: https://github.com/lfreleng-actions/repository-metadata-action#dependency-change-detection

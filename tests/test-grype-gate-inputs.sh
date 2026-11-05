@@ -79,12 +79,14 @@ RELEASE = ("build-test-release.yaml", "build-test-release-multiarch.yaml")
 
 # name -> (type, default, grype-scan-action input)
 POLICY = {
+    "grype_fail_on": ("string", "medium", "fail-on"),
     "grype_dependency_policy": ("string", "declared", "dependency-policy"),
     "grype_transitive_fail_on": ("string", "critical", "transitive-fail-on"),
     "grype_only_fixed": ("boolean", True, "only-fixed"),
     "grype_remediation_window_days": ("string", "", "remediation-window-days"),
     "grype_remediation_window_start": (
         "string", "", "remediation-window-start"),
+    "grype_bypass_repository": ("string", "", "bypass-repository"),
 }
 GATE_WHEN = ("grype_gate_when", "string", "always", "gate-when")
 # Verify-only inputs: name -> (type, default, repository-metadata input)
@@ -375,6 +377,9 @@ def mutants(doc):
     inputs(d)["grype_remediation_window_days"]["default"] = "30"
     yield "remediation window on by default", d
     d = copy.deepcopy(doc)
+    inputs(d)["grype_bypass_repository"]["default"] = "octo/bypass"
+    yield "bypass repository set by default", d
+    d = copy.deepcopy(doc)
     inputs(d)["grype_dependency_ecosystems"]["default"] = "python"
     yield "ecosystems narrowed by default", d
     for _, (_, _, passed) in POLICY.items():
@@ -529,9 +534,9 @@ PYEOF
 # if a step loses an input.
 policy="${scratch}/validate-grype-policy.sh"
 gate="${scratch}/validate-grype-gate-when.sh"
-for var in GRYPE_DEPENDENCY_POLICY GRYPE_TRANSITIVE_FAIL_ON \
+for var in GRYPE_FAIL_ON GRYPE_DEPENDENCY_POLICY GRYPE_TRANSITIVE_FAIL_ON \
   GRYPE_ONLY_FIXED GRYPE_REMEDIATION_WINDOW_DAYS \
-  GRYPE_REMEDIATION_WINDOW_START; do
+  GRYPE_REMEDIATION_WINDOW_START GRYPE_BYPASS_REPOSITORY; do
   if ! grep -q "${var}" "${policy}"; then
     echo "::error::validate-grype-policy does not read ${var}"
     exit 1
@@ -583,9 +588,10 @@ policy_case() {
   local verdict="$1" name="$2"
   shift 2
   drive "${policy}" "${name}" "${verdict}" \
-    GRYPE_DEPENDENCY_POLICY=declared GRYPE_TRANSITIVE_FAIL_ON=critical \
-    GRYPE_ONLY_FIXED=true GRYPE_REMEDIATION_WINDOW_DAYS= \
-    GRYPE_REMEDIATION_WINDOW_START= "$@"
+    GRYPE_FAIL_ON=medium GRYPE_DEPENDENCY_POLICY=declared \
+    GRYPE_TRANSITIVE_FAIL_ON=critical GRYPE_ONLY_FIXED=true \
+    GRYPE_REMEDIATION_WINDOW_DAYS= GRYPE_REMEDIATION_WINDOW_START= \
+    GRYPE_BYPASS_REPOSITORY= "$@"
 }
 
 policy_case accept defaults
@@ -593,7 +599,11 @@ for value in all declared; do
   policy_case accept "policy ${value}" GRYPE_DEPENDENCY_POLICY="${value}"
 done
 for value in none negligible low medium high critical; do
+  policy_case accept "fail-on ${value}" GRYPE_FAIL_ON="${value}"
   policy_case accept "transitive ${value}" GRYPE_TRANSITIVE_FAIL_ON="${value}"
+done
+for value in lfreleng-actions/.github octo/repo.name my_org/my-repo; do
+  policy_case accept "bypass ${value}" GRYPE_BYPASS_REPOSITORY="${value}"
 done
 policy_case accept 'only-fixed false' GRYPE_ONLY_FIXED=false
 for value in 0 1 30 365; do
@@ -612,6 +622,7 @@ for value in declare 'all declared' '' Declared; do
     GRYPE_DEPENDENCY_POLICY="${value}"
 done
 for value in Critical '' 'low medium' moderate; do
+  policy_case reject grype_fail_on GRYPE_FAIL_ON="${value}"
   policy_case reject grype_transitive_fail_on \
     GRYPE_TRANSITIVE_FAIL_ON="${value}"
 done
@@ -627,8 +638,15 @@ for value in 2026-1-1 01-01-2026 20260101 2026-13-01 2026-02-30 \
   policy_case reject grype_remediation_window_start \
     GRYPE_REMEDIATION_WINDOW_START="${value}"
 done
+for value in lfreleng-actions 'octo/repo/extra' '/repo' 'octo/' \
+  'octo /repo' 'https://github.com/octo/repo' 'octo/repo;id'; do
+  policy_case reject grype_bypass_repository \
+    GRYPE_BYPASS_REPOSITORY="${value}"
+done
 policy_case reject grype_dependency_policy \
   GRYPE_DEPENDENCY_POLICY="$(printf 'x\n::warning::forged')"
+policy_case reject grype_bypass_repository \
+  GRYPE_BYPASS_REPOSITORY="$(printf 'octo/repo\n::warning::forged')"
 policy_case reject grype_remediation_window_start \
   GRYPE_REMEDIATION_WINDOW_START="$(printf 'x\n::warning::forged')"
 
