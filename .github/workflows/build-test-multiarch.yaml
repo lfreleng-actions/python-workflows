@@ -559,24 +559,6 @@ jobs:
           done
           exit "${error}"
 
-      - name: 'Validate grype_gate_when input'
-        id: validate-grype-gate-when
-        shell: bash
-        env:
-          GRYPE_GATE_WHEN: ${{ inputs.grype_gate_when }}
-        run: |
-          # grype-scan-action rejects other values too, but only after
-          # the build and SBOM jobs have run
-          case "${GRYPE_GATE_WHEN}" in
-            always|dependencies-changed) ;;
-            *)
-              # A newline in the value could forge a workflow command
-              echo "::error::Invalid grype_gate_when input:" \
-                "$(printf '%s' "${GRYPE_GATE_WHEN}" | tr -d '\r\n')"
-              exit 1
-              ;;
-          esac
-
       - name: 'Validate grype_dependency_ecosystems input'
         id: validate-grype-dependency-ecosystems
         shell: bash
@@ -616,72 +598,33 @@ jobs:
             exit 1
           fi
 
-      - name: 'Validate Grype policy inputs'
-        id: validate-grype-policy
-        shell: bash
-        env:
-          GRYPE_FAIL_ON: ${{ inputs.grype_fail_on }}
-          GRYPE_DEPENDENCY_POLICY: ${{ inputs.grype_dependency_policy }}
-          GRYPE_TRANSITIVE_FAIL_ON: ${{ inputs.grype_transitive_fail_on }}
-          GRYPE_ONLY_FIXED: ${{ inputs.grype_only_fixed }}
+      # grype-scan-action checks every input it owns before it installs
+      # anything, but only once the build and SBOM jobs have run. In
+      # validate-only mode it runs that same check against the with:
+      # block below and stops: no Grype install, no database, no scan,
+      # no network. The block mirrors the scan step's, expression for
+      # expression, so the two cannot drift; tests/test-grype-gate-
+      # inputs.sh holds them to that. Left out are the values the scan
+      # step alone can give: the SBOM, and anything from the needs,
+      # matrix or secrets contexts, which this job has no use for.
+      - name: 'Validate Grype inputs'
+        id: validate-grype
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/grype-scan-action@f65dca2762823cfc8f376e32fee9baa6f3292696  # v0.6.2
+        with:
+          validate-only: 'true'
+          fail-on: ${{ inputs.grype_fail_on }}
+          only-fixed: ${{ inputs.grype_only_fixed }}
+          dependency-policy: ${{ inputs.grype_dependency_policy }}
+          transitive-fail-on: ${{ inputs.grype_transitive_fail_on }}
+          gate-when: ${{ inputs.grype_gate_when }}
           # yamllint disable-line rule:line-length
-          GRYPE_REMEDIATION_WINDOW_DAYS: ${{ inputs.grype_remediation_window_days }}
+          remediation-window-days: ${{ inputs.grype_remediation_window_days }}
           # yamllint disable-line rule:line-length
-          GRYPE_REMEDIATION_WINDOW_START: ${{ inputs.grype_remediation_window_start }}
-          GRYPE_BYPASS_REPOSITORY: ${{ inputs.grype_bypass_repository }}
-        run: |
-          # grype-scan-action rejects other values too, but only after
-          # the build and SBOM jobs have run
-          errors=0
-          # A newline in a rejected value could forge a workflow command
-          invalid() {
-            echo "::error::Invalid $1 input:" \
-              "$(printf '%s' "$2" | tr -d '\r\n')"
-            errors=1
-          }
-          # $1 input name, $2 its value, then the values it may take
-          check() {
-            local name="$1" value="$2" allowed
-            shift 2
-            for allowed in "$@"; do
-              if [ "${value}" = "${allowed}" ]; then
-                return 0
-              fi
-            done
-            invalid "${name}" "${value}"
-          }
-          check grype_fail_on "${GRYPE_FAIL_ON}" \
-            none negligible low medium high critical
-          check grype_dependency_policy "${GRYPE_DEPENDENCY_POLICY}" \
-            all declared
-          check grype_transitive_fail_on "${GRYPE_TRANSITIVE_FAIL_ON}" \
-            none negligible low medium high critical
-          check grype_only_fixed "${GRYPE_ONLY_FIXED}" true false
-          # Empty turns the window off; otherwise a whole number of days
-          if [[ ! "${GRYPE_REMEDIATION_WINDOW_DAYS}" =~ ^[0-9]*$ ]]; then
-            invalid grype_remediation_window_days \
-              "${GRYPE_REMEDIATION_WINDOW_DAYS}"
-          fi
-          # Empty sets no floor; otherwise a real calendar date, which
-          # the shape alone cannot prove, so GNU date reads it back.
-          # Whether it lies in the future is left to the action.
-          if [ -n "${GRYPE_REMEDIATION_WINDOW_START}" ]; then
-            iso_date='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-            if [[ ! "${GRYPE_REMEDIATION_WINDOW_START}" =~ ${iso_date} ]] \
-              || [ "$(date -u -d "${GRYPE_REMEDIATION_WINDOW_START}" \
-                +%Y-%m-%d 2>/dev/null)" \
-                != "${GRYPE_REMEDIATION_WINDOW_START}" ]; then
-              invalid grype_remediation_window_start \
-                "${GRYPE_REMEDIATION_WINDOW_START}"
-            fi
-          fi
-          # Empty uses the calling repository; otherwise owner/name
-          repo_name='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
-          if [[ -n "${GRYPE_BYPASS_REPOSITORY}" \
-            && ! "${GRYPE_BYPASS_REPOSITORY}" =~ ${repo_name} ]]; then
-            invalid grype_bypass_repository "${GRYPE_BYPASS_REPOSITORY}"
-          fi
-          exit "${errors}"
+          remediation-window-start: ${{ inputs.grype_remediation_window_start }}
+          # yamllint disable-line rule:line-length
+          permit-fail: ${{ inputs.grype_permit_fail || vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
+          bypass-repository: ${{ inputs.grype_bypass_repository }}
 
       - name: 'Require Gerrit project, branch and URL'
         if: inputs.gerrit_refspec != ''
@@ -1393,7 +1336,7 @@ jobs:
         id: grype-audit
         if: ${{ inputs.grype_enabled }}
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/grype-scan-action@5c81b23afb2ea771b2d247807a12d90783328675  # v0.5.0
+        uses: lfreleng-actions/grype-scan-action@f65dca2762823cfc8f376e32fee9baa6f3292696  # v0.6.2
         with:
           sbom: 'sbom-cyclonedx.json'
           name: ${{ matrix.target.arch }}

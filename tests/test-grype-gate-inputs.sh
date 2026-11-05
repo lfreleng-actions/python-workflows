@@ -13,22 +13,28 @@
 # They expose grype_gate_when and the detection inputs. The release
 # workflows take the same policy inputs, pin the same metadata
 # action, pass gate-when 'always' and never detect. Every workflow
-# validates the policy inputs in gerrit-validate with one shared step,
-# so a typo fails in seconds rather than after the build.
+# validates the Grype inputs in gerrit-validate by calling
+# grype-scan-action in validate-only mode with the scan step's own
+# with: block, so a typo fails in seconds rather than after the build;
+# the detection inputs, which repository-metadata-action owns, keep a
+# shell step the two verify workflows share.
 #
-# repository-metadata-action's own suite proves what it detects; this
-# script proves the wiring around it: the pin and the detection
-# inputs, the checkout depth detection needs, the job output and its
-# guarded hand-off, that the retired sbom-job detection and its
-# sidecar are gone, that every policy input exists with the agreed
-# default and reaches the scan, and that the shared validation steps
-# reject every value they must. It then mutates a copy of each verify
-# workflow in each way the check must catch and expects each mutant to
-# fail, so a check that silently passes everything fails here too.
+# repository-metadata-action's own suite proves what it detects, and
+# grype-scan-action's proves what validate-only rejects; this script
+# proves the wiring around them: the pin and the detection inputs, the
+# checkout depth detection needs, the job output and its guarded
+# hand-off, that the retired sbom-job detection and its sidecar are
+# gone, that every policy input exists with the agreed default and
+# reaches the scan, and the validate-only contract: one validator
+# step, at the scan's pin, with validate-only 'true' and, for every
+# input the scan step passes, the identical expression. It then
+# mutates a copy of each verify workflow in each way the check must
+# catch and expects each mutant to fail, so a check that silently
+# passes everything fails here too.
 #
 # Usage: bash tests/test-grype-gate-inputs.sh [<workflows-dir>]
 #
-# Needs python3 with PyYAML, and GNU date for the validation step.
+# Needs python3 with PyYAML.
 
 set -euo pipefail
 
@@ -49,12 +55,13 @@ fi
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
 
-# Static checks over the four workflows. Writes the shared validation
-# step bodies to the scratch directory for the second half.
+# Static checks over the four workflows. Writes the shared detection
+# validation step body to the scratch directory for the second half.
 # '-I' keeps the working directory off sys.path.
 python3 -I - "${workflows}" "${scratch}" <<'PYEOF'
 import copy
 import pathlib
+import re
 import sys
 
 import yaml
@@ -62,7 +69,7 @@ import yaml
 METADATA = "lfreleng-actions/repository-metadata-action"
 METADATA_PIN = "18e5b7c5b16423b0e734891d103513826b324858"  # v0.4.0
 GRYPE = "lfreleng-actions/grype-scan-action"
-GRYPE_PIN = "5c81b23afb2ea771b2d247807a12d90783328675"  # v0.5.0
+GRYPE_PIN = "f65dca2762823cfc8f376e32fee9baa6f3292696"  # v0.6.2
 # The detection wiring this replaced: none of it may come back
 RETIRED = (
     "lfreleng-actions/dependency-change-action",
@@ -97,6 +104,7 @@ DETECTION = {
 DETECT_IF = ("inputs.grype_enabled",
              "inputs.grype_gate_when == 'dependencies-changed'")
 METADATA_JOB = "repository-metadata"
+VALIDATE_JOB = "gerrit-validate"
 METADATA_STEP = "repo-metadata"
 METADATA_WITH = {
     "dependency_change": OPEN + " && ".join(DETECT_IF) + CLOSE,
@@ -139,9 +147,15 @@ def needs_of(job):
 
 
 def find_scan(doc):
-    """Return (job id, step) for the one grype-scan-action step."""
+    """Return (job id, step) for the one grype-scan-action scan step.
+
+    The validator in gerrit-validate calls the same action and is
+    checked against the scan, so it is not a candidate.
+    """
     found = []
     for job_id, job in (doc.get("jobs") or {}).items():
+        if job_id == VALIDATE_JOB:
+            continue
         for s in (job or {}).get("steps") or []:
             if uses_name(s) == GRYPE:
                 found.append((job_id, s))
@@ -298,8 +312,9 @@ def check_retired(doc, problems):
 
 
 def check_validation(name, doc, reference, problems):
-    """Return the shared validation steps, keyed as in reference."""
-    steps = doc["jobs"]["gerrit-validate"]["steps"]
+    """Return the shared detection validation steps, keyed as in
+    reference."""
+    steps = doc["jobs"][VALIDATE_JOB]["steps"]
     found = {}
     for key, step_id, verify_only in VALIDATION:
         s = step(steps, "id", step_id)
@@ -317,12 +332,77 @@ def check_validation(name, doc, reference, problems):
     return found
 
 
-# key, step id, verify only
+# key, step id, verify only. Only the detection inputs keep a shell
+# step; grype-scan-action validates its own.
 VALIDATION = (
-    ("policy", "validate-grype-policy", False),
-    ("gate", "validate-grype-gate-when", True),
     ("ecosystems", "validate-grype-dependency-ecosystems", True),
 )
+
+
+def mirrored(key, value):
+    """Whether the validator must pass this scan input.
+
+    The scan alone has an SBOM, and validate-only rejects one. The
+    needs, matrix and secrets contexts hold values the scan computes
+    or receives at run time: the verdict, the leg, the token. The
+    validator cannot evaluate the first two (gerrit-validate needs no
+    job and runs no matrix) and has no use for the token; check_scan
+    holds the verdict expression to its exact form instead.
+    """
+    if key in ("sbom", "target"):
+        return False
+    return not re.search(r"\b(needs|matrix|secrets)\.", str(value))
+
+
+def check_validator(doc, problems):
+    """gerrit-validate runs grype-scan-action in validate-only mode
+    with the scan step's own inputs."""
+    _, scan = find_scan(doc)
+    steps = doc["jobs"][VALIDATE_JOB]["steps"]
+    found = [s for s in steps if uses_name(s) == GRYPE]
+    if len(found) != 1:
+        problems.append(f"gerrit-validate has {len(found)} {GRYPE} steps, "
+                        "expected 1")
+        return
+    validator = found[0]
+    where = "gerrit-validate validator"
+    if scan is not None and validator.get("uses") != scan.get("uses"):
+        problems.append(f"{where} uses {validator.get('uses')!r}, the "
+                        f"scan {scan.get('uses')!r}; one pin governs both")
+    if str(validator.get("uses", "")).partition("@")[2] != GRYPE_PIN:
+        problems.append(f"{where} does not pin {GRYPE}@{GRYPE_PIN}")
+    given = validator.get("with") or {}
+    # The literal string: YAML reads a bare true as a boolean
+    if given.get("validate-only") != "true" or not isinstance(
+            given.get("validate-only"), str):
+        problems.append(f"{where} validate-only is "
+                        f"{given.get('validate-only')!r}, expected 'true'")
+    if scan is None:
+        return
+    scan_with = scan.get("with") or {}
+    for key, value in scan_with.items():
+        if not mirrored(key, value):
+            if key in given:
+                problems.append(f"{where} passes {key}, which only the "
+                                "scan can give")
+        elif key not in given:
+            problems.append(f"{where} does not pass {key}; the scan does")
+        elif given[key] != value:
+            problems.append(f"{where} passes {key} as {given[key]!r}, "
+                            f"the scan {value!r}")
+    for key in given:
+        if key != "validate-only" and key not in scan_with:
+            problems.append(f"{where} passes {key}, which the scan does "
+                            "not")
+    # No shell step re-implements the action's rules
+    owned = {expr(name) for name in list(POLICY) + [GATE_WHEN[0]]}
+    for s in steps:
+        if "run" not in (s or {}):
+            continue
+        label = s.get("id") or s.get("name")
+        for value in owned & set((s.get("env") or {}).values()):
+            problems.append(f"gerrit-validate step {label!r} reads "
+                            f"{value}, which {GRYPE} validates")
 
 
 def check_doc(name, doc, reference=None):
@@ -335,6 +415,7 @@ def check_doc(name, doc, reference=None):
     if name in VERIFY:
         check_consumer(doc, problems)
     check_validation(name, doc, reference, problems)
+    check_validator(doc, problems)
     return problems
 
 
@@ -467,13 +548,71 @@ def mutants(doc):
     yield "gate step on every gate", d
     for _, step_id, _ in VALIDATION:
         d = copy.deepcopy(doc)
-        steps = d["jobs"]["gerrit-validate"]["steps"]
+        steps = d["jobs"][VALIDATE_JOB]["steps"]
         steps.remove(step(steps, "id", step_id))
         yield f"drop {step_id}", d
         d = copy.deepcopy(doc)
-        steps = d["jobs"]["gerrit-validate"]["steps"]
+        steps = d["jobs"][VALIDATE_JOB]["steps"]
         step(steps, "id", step_id)["run"] = "exit 0"
         yield f"{step_id} diverged", d
+
+    def validator(d):
+        steps = d["jobs"][VALIDATE_JOB]["steps"]
+        return [s for s in steps if uses_name(s) == GRYPE][0]
+
+    d = copy.deepcopy(doc)
+    d["jobs"][VALIDATE_JOB]["steps"].remove(validator(d))
+    yield "drop the validator", d
+    d = copy.deepcopy(doc)
+    d["jobs"][VALIDATE_JOB]["steps"].append(
+        copy.deepcopy(validator(d)))
+    yield "validator duplicated", d
+    d = copy.deepcopy(doc)
+    validator(d)["uses"] = f"{GRYPE}@{'0' * 40}"
+    yield "validator pinned elsewhere", d
+    d = copy.deepcopy(doc)
+    scan(d)["uses"] = f"{GRYPE}@{'0' * 40}"
+    validator(d)["uses"] = f"{GRYPE}@{'0' * 40}"
+    yield "validator and scan pinned elsewhere together", d
+    d = copy.deepcopy(doc)
+    del validator(d)["with"]["validate-only"]
+    yield "validate-only removed", d
+    d = copy.deepcopy(doc)
+    validator(d)["with"]["validate-only"] = True
+    yield "validate-only a YAML boolean", d
+    d = copy.deepcopy(doc)
+    validator(d)["with"]["validate-only"] = "false"
+    yield "validate-only false", d
+    for key, value in scan(doc)["with"].items():
+        if not mirrored(key, value):
+            d = copy.deepcopy(doc)
+            validator(d)["with"][key] = value
+            yield f"validator passes {key}", d
+            continue
+        d = copy.deepcopy(doc)
+        del validator(d)["with"][key]
+        yield f"validator drops {key}", d
+        d = copy.deepcopy(doc)
+        other = expr("grype_transitive_fail_on")
+        if value == other:
+            other = expr("grype_fail_on")
+        validator(d)["with"][key] = other
+        yield f"validator passes {key} as another input", d
+    d = copy.deepcopy(doc)
+    validator(d)["with"]["fail-on"] = "medium"
+    yield "validator fixes fail-on", d
+    d = copy.deepcopy(doc)
+    scan(d)["with"]["cache-db"] = "restore-only"
+    yield "scan passes an input the validator does not", d
+    d = copy.deepcopy(doc)
+    validator(d)["with"]["cache-db"] = "restore-only"
+    yield "validator passes an input the scan does not", d
+    d = copy.deepcopy(doc)
+    d["jobs"][VALIDATE_JOB]["steps"].append({
+        "name": "Validate Grype policy inputs", "id": "validate-grype-policy",
+        "shell": "bash", "env": {"GRYPE_FAIL_ON": expr("grype_fail_on")},
+        "run": "exit 0"})
+    yield "shell policy validation back", d
 
 
 root = pathlib.Path(sys.argv[1])
@@ -529,23 +668,9 @@ if escaped:
     sys.exit(1)
 PYEOF
 
-# Drive the extracted validation steps against the values each must
-# accept and reject. Fail loudly rather than silently testing nothing
-# if a step loses an input.
-policy="${scratch}/validate-grype-policy.sh"
-gate="${scratch}/validate-grype-gate-when.sh"
-for var in GRYPE_FAIL_ON GRYPE_DEPENDENCY_POLICY GRYPE_TRANSITIVE_FAIL_ON \
-  GRYPE_ONLY_FIXED GRYPE_REMEDIATION_WINDOW_DAYS \
-  GRYPE_REMEDIATION_WINDOW_START GRYPE_BYPASS_REPOSITORY; do
-  if ! grep -q "${var}" "${policy}"; then
-    echo "::error::validate-grype-policy does not read ${var}"
-    exit 1
-  fi
-done
-if ! grep -q GRYPE_GATE_WHEN "${gate}"; then
-  echo "::error::validate-grype-gate-when does not read GRYPE_GATE_WHEN"
-  exit 1
-fi
+# Drive the extracted detection validation step against the values it
+# must accept and reject. Fail loudly rather than silently testing
+# nothing if the step loses its input.
 ecosystems="${scratch}/validate-grype-dependency-ecosystems.sh"
 if ! grep -q GRYPE_DEPENDENCY_ECOSYSTEMS "${ecosystems}"; then
   echo "::error::validate-grype-dependency-ecosystems does not read" \
@@ -582,83 +707,6 @@ drive() {
   fi
 }
 
-# $1 accept|reject, $2 input the error must name, then any overrides
-# of the defaults
-policy_case() {
-  local verdict="$1" name="$2"
-  shift 2
-  drive "${policy}" "${name}" "${verdict}" \
-    GRYPE_FAIL_ON=medium GRYPE_DEPENDENCY_POLICY=declared \
-    GRYPE_TRANSITIVE_FAIL_ON=critical GRYPE_ONLY_FIXED=true \
-    GRYPE_REMEDIATION_WINDOW_DAYS= GRYPE_REMEDIATION_WINDOW_START= \
-    GRYPE_BYPASS_REPOSITORY= "$@"
-}
-
-policy_case accept defaults
-for value in all declared; do
-  policy_case accept "policy ${value}" GRYPE_DEPENDENCY_POLICY="${value}"
-done
-for value in none negligible low medium high critical; do
-  policy_case accept "fail-on ${value}" GRYPE_FAIL_ON="${value}"
-  policy_case accept "transitive ${value}" GRYPE_TRANSITIVE_FAIL_ON="${value}"
-done
-for value in lfreleng-actions/.github octo/repo.name my_org/my-repo; do
-  policy_case accept "bypass ${value}" GRYPE_BYPASS_REPOSITORY="${value}"
-done
-policy_case accept 'only-fixed false' GRYPE_ONLY_FIXED=false
-for value in 0 1 30 365; do
-  policy_case accept "window ${value} days" \
-    GRYPE_REMEDIATION_WINDOW_DAYS="${value}"
-done
-for value in 2026-01-01 2024-02-29 2026-12-31; do
-  policy_case accept "window start ${value}" \
-    GRYPE_REMEDIATION_WINDOW_START="${value}"
-done
-policy_case accept 'window with start' GRYPE_REMEDIATION_WINDOW_DAYS=30 \
-  GRYPE_REMEDIATION_WINDOW_START=2026-01-01
-# Bad values per input, each named in the error
-for value in declare 'all declared' '' Declared; do
-  policy_case reject grype_dependency_policy \
-    GRYPE_DEPENDENCY_POLICY="${value}"
-done
-for value in Critical '' 'low medium' moderate; do
-  policy_case reject grype_fail_on GRYPE_FAIL_ON="${value}"
-  policy_case reject grype_transitive_fail_on \
-    GRYPE_TRANSITIVE_FAIL_ON="${value}"
-done
-for value in yes '' 1 True; do
-  policy_case reject grype_only_fixed GRYPE_ONLY_FIXED="${value}"
-done
-for value in -1 1.5 30d ' 30' 'thirty' '1 2'; do
-  policy_case reject grype_remediation_window_days \
-    GRYPE_REMEDIATION_WINDOW_DAYS="${value}"
-done
-for value in 2026-1-1 01-01-2026 20260101 2026-13-01 2026-02-30 \
-  2025-02-29 2026-01-01T00:00:00Z today ' 2026-01-01'; do
-  policy_case reject grype_remediation_window_start \
-    GRYPE_REMEDIATION_WINDOW_START="${value}"
-done
-for value in lfreleng-actions 'octo/repo/extra' '/repo' 'octo/' \
-  'octo /repo' 'https://github.com/octo/repo' 'octo/repo;id'; do
-  policy_case reject grype_bypass_repository \
-    GRYPE_BYPASS_REPOSITORY="${value}"
-done
-policy_case reject grype_dependency_policy \
-  GRYPE_DEPENDENCY_POLICY="$(printf 'x\n::warning::forged')"
-policy_case reject grype_bypass_repository \
-  GRYPE_BYPASS_REPOSITORY="$(printf 'octo/repo\n::warning::forged')"
-policy_case reject grype_remediation_window_start \
-  GRYPE_REMEDIATION_WINDOW_START="$(printf 'x\n::warning::forged')"
-
-for value in always dependencies-changed; do
-  drive "${gate}" "gate-when ${value}" accept GRYPE_GATE_WHEN="${value}"
-done
-for value in '' Always never dependencies_changed 'always x'; do
-  drive "${gate}" grype_gate_when reject GRYPE_GATE_WHEN="${value}"
-done
-drive "${gate}" grype_gate_when reject \
-  GRYPE_GATE_WHEN="$(printf 'x\n::warning::forged')"
-
 # Empty watches every preset; otherwise each name, trimmed, is one of
 # the seven presets of the pinned dependency-change-action
 for value in '' node python go maven gradle rust docker 'node,python' \
@@ -677,7 +725,7 @@ drive "${ecosystems}" grype_dependency_ecosystems reject \
   GRYPE_DEPENDENCY_ECOSYSTEMS="$(printf 'python\ngo')"
 
 if [ "${errors}" != '0' ]; then
-  echo "Grype policy validation incorrect ❌"
+  echo "Grype detection input validation incorrect ❌"
   exit 1
 fi
-echo "Grype policy validation accepts and rejects as documented ✅"
+echo "Grype detection input validation accepts and rejects as documented ✅"

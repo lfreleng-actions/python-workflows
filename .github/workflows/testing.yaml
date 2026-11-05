@@ -133,8 +133,10 @@ jobs:
   # it needs (actions/checkout fetches one commit by default, and the
   # comparison needs the parent), the job output guarded by the job's
   # result, the policy and detection inputs with their defaults and
-  # pass-throughs, and the gerrit-validate steps, which it extracts and
-  # drives against every value they must reject.
+  # pass-throughs, the validate-only call in gerrit-validate, which
+  # must share the scan's pin and mirror its inputs, and the
+  # ecosystem validation step, which it extracts and drives against
+  # every value it must reject.
   # tests/test-grype-sbom-binding.sh proves the scan reads its own
   # call's artefact. Both scripts run as pre-commit hooks.
   grype-gate-wiring:

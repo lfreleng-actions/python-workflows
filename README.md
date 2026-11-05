@@ -225,12 +225,14 @@ symlinked dependency file) gives an empty verdict, and a skipped or
 failed `repository-metadata` job passes an empty one too, so the gate
 stays on unless the job proved the change left every dependency file
 alone. A step named `Grype gate active: <true|false>` in the Grype
-job's log shows the outcome. The `gerrit-validate` job rejects a
-`grype_gate_when` value outside `always` and `dependencies-changed`,
-an ecosystem outside the presets, a policy or severity outside the
-action's vocabulary, a window whose days value is not an integer or
-whose start is not a real calendar date, and a bypass repository that
-is not `owner/name`.
+job's log shows the outcome. The `gerrit-validate` job checks the
+Grype inputs before any build runs by calling `grype-scan-action` in
+its input-checking mode with the same `with:` block the scan step
+gets: the action applies its own rules to a `grype_gate_when`,
+policy, severity, remediation window or bypass repository value and
+stops, installing, fetching and scanning nothing, so a typo fails in
+seconds. The ecosystem presets belong to the dependency detector, so
+a shell step in the same job still rejects an ecosystem outside them.
 
 The remediation window bounds the leniency of an unarmed run in time.
 It applies to one kind of run: `grype_gate_when` is
@@ -508,8 +510,9 @@ watches the `docker` preset alone, which nothing in the fixture
 matches: the verdict resolves to `false` and the gate must drop. The
 `grype-gate-assert` job reads the run's jobs to prove both. The
 `grype-gate-wiring` job runs `tests/test-grype-gate-inputs.sh`, which
-checks the Grype gate wiring in all four workflows and drives the
-input validation steps against the values they must reject, and
+checks the Grype gate wiring in all four workflows, holds the
+input-checking call to the scan step's pin and inputs and drives the
+ecosystem validation step against the values it must reject, and
 `tests/test-grype-sbom-binding.sh`, which fails if any Grype scan reads
 an SBOM artefact selected by name rather than its own call's upload;
 both scripts run as pre-commit hooks.
