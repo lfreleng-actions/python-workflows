@@ -3,11 +3,12 @@
 # SPDX-FileCopyrightText: 2026 The Linux Foundation
 
 # Exercises the reusable workflows in this repository against three of the
-# largest downstream Python consumers, in parallel, to prove the reusable
-# workflows function end-to-end:
+# largest downstream Python consumers, and an in-repository fixture, in
+# parallel, to prove the reusable workflows function end-to-end:
 #   * dependamerge  (standard single-arch) -> build-test.yaml
 #   * lftools-uv    (standard single-arch) -> build-test.yaml
 #   * python-nss-ng (multi-arch C build)   -> build-test-multiarch.yaml
+#   * tests/fixtures/grype-gate (fixture)  -> build-test.yaml
 #
 # The reusable workflows are referenced with the self-repository form
 # ('$/'), which resolves this repository at the commit already
@@ -17,10 +18,12 @@
 # pinned to the v1.2.0 release commit (see ref: below).
 #
 # The dependamerge and python-nss-ng legs run the dependencies-changed
-# Grype gate. Each builds another repository, which
-# dependency-change-action cannot compare against this pull request,
-# so the result is unresolved: no sidecar is written and the gate stays
-# on. grype-gate-assert proves that from the run, and
+# Grype gate. Each builds another repository, which the
+# repository-metadata job cannot compare against this pull request, so
+# the verdict is unresolved and the gate stays on. The fixture leg
+# builds this pull request itself, so its verdict resolves, and it
+# watches only the docker preset, which nothing in the fixture matches:
+# the gate must drop. grype-gate-assert proves both from the run, and
 # grype-gate-wiring reads the workflow files for the wiring no run can
 # show.
 name: 'Testing 🧪'
@@ -101,16 +104,37 @@ jobs:
       # so each SBOM leg's in-leg Grype step keeps the gate on
       grype_gate_when: 'dependencies-changed'
 
-  # The dependencies-changed gate trusts a sidecar that
-  # dependency-change-action writes beside the SBOM and
-  # grype-scan-action reads. The action's own suite proves what it
-  # writes; tests/test-grype-gate-inputs.sh proves the wiring around it
-  # in all four workflows: the pinned call and its condition, the
-  # checkout depth it needs (actions/checkout fetches one commit by
-  # default, and the comparison needs the parent), the sidecar's path
-  # through the artefact, the policy inputs with their defaults and
-  # pass-throughs, and the shared gerrit-validate step, which it
-  # extracts and drives against every value it must reject.
+  # The resolved path: a project in this repository, so the
+  # repository-metadata job checks out this pull request and compares
+  # it with its parent. Only the docker preset is watched, and no
+  # Dockerfile sits in or above the fixture, so the verdict is a
+  # deterministic 'false' whatever else the pull request changes. The
+  # steps that add nothing to the gate are off.
+  fixture:
+    name: 'Fixture (grype-gate)'
+    permissions:
+      contents: read
+      pull-requests: read  # Reusable workflow reads PR metadata
+    uses: $/.github/workflows/build-test.yaml
+    with:
+      path_prefix: 'tests/fixtures/grype-gate'
+      artifact_suffix: '-grype-gate-fixture'
+      tests_enabled: false
+      audit_enabled: false
+      cbom_enabled: false
+      grype_gate_when: 'dependencies-changed'
+      grype_dependency_ecosystems: 'docker'
+
+  # The dependencies-changed gate trusts the verdict the
+  # repository-metadata job computes and hands grype-scan-action as
+  # dependencies-changed. The action's own suite proves the verdict;
+  # tests/test-grype-gate-inputs.sh proves the wiring around it in all
+  # four workflows: the pinned call and its inputs, the checkout depth
+  # it needs (actions/checkout fetches one commit by default, and the
+  # comparison needs the parent), the job output guarded by the job's
+  # result, the policy and detection inputs with their defaults and
+  # pass-throughs, and the gerrit-validate steps, which it extracts and
+  # drives against every value they must reject.
   # tests/test-grype-sbom-binding.sh proves the scan reads its own
   # call's artefact. Both scripts run as pre-commit hooks.
   grype-gate-wiring:
@@ -147,11 +171,10 @@ jobs:
           fi
           echo "Grype gate wiring correct ✅" >> "$GITHUB_STEP_SUMMARY"
 
-      # The sidecar above decides whether Grype blocks, so the scan has
-      # to read its own call's artefact: by the upload's ID, or in the
-      # leg that wrote it. A download by name would hand a call that
-      # shares a name with a later one the other call's SBOM and
-      # sidecar. The standard legs pass distinct suffixes, so a run
+      # The scan has to read its own call's SBOM: by the upload's ID,
+      # or in the leg that wrote it. A download by name would hand a
+      # call that shares a name with a later one the other call's
+      # SBOM. The standard legs pass distinct suffixes, so a run
       # cannot show this; the script reads it from the workflow files.
       - name: 'Assert the Grype scan is bound to the SBOM upload'
         shell: bash
@@ -163,17 +186,17 @@ jobs:
           fi
           echo "Grype scan bound to its SBOM ✅" >> "$GITHUB_STEP_SUMMARY"
 
-  # Proves the unresolved path from the run itself, not just that the
-  # job graph went green. Each dependencies-changed leg builds another
-  # repository, which the action cannot compare against this pull
-  # request: it writes no sidecar, the SBOM upload succeeds without
-  # one, and the Grype step finds no manifest and keeps the gate on.
-  # Runs whatever the legs' verdicts, so a CVE in a consumer cannot
-  # hide these checks.
+  # Proves the gate verdicts from the run itself, not just that the job
+  # graph went green. Each consumer dependencies-changed leg builds
+  # another repository, which the repository-metadata job cannot
+  # compare against this pull request: the verdict is empty and the
+  # Grype step keeps the gate on. The fixture leg resolves to 'false'
+  # and the Grype step drops the gate. Runs whatever the legs'
+  # verdicts, so a CVE in a consumer cannot hide these checks.
   grype-gate-assert:
-    name: 'Test: Grype gate stays on when unresolved'
+    name: 'Test: Grype gate follows the dependency verdict'
     runs-on: ubuntu-latest
-    needs: ['standard', 'multiarch']
+    needs: ['standard', 'multiarch', 'fixture']
     if: ${{ !cancelled() }}
     permissions:
       actions: read  # list this run's jobs and download its artefacts
@@ -190,7 +213,7 @@ jobs:
           allowed-endpoints: >
             ${{ env.CONNECTION_ALLOW_LIST }}
 
-      # The steps below source this helper for their read-only listings,
+      # The step below sources this helper for its read-only listing,
       # so one transient 5xx cannot fail the job. It buffers each
       # attempt and prints only a complete one, so a page that failed
       # mid-pagination is never half-printed; after the third failure
@@ -226,7 +249,7 @@ jobs:
       # on by construction, and the summary would say nothing new. A
       # skipped step's name may stay unrendered, so only its conclusion
       # is checked.
-      - name: 'Assert the gate stayed on where the change was unresolved'
+      - name: 'Assert the gate follows the dependency verdict'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -241,8 +264,10 @@ jobs:
             Multi-Arch / SBOM arm64
           ALWAYS: |
             Standard (lftools-uv) / Grype Audit SBOM
+          RESOLVED: |
+            Fixture (grype-gate) / Grype Audit SBOM
         run: |
-          # Assert the gate stayed on where the change was unresolved
+          # Assert the gate follows the dependency verdict
           set -euo pipefail
           status=0
           fail() { echo "::error::$*"; status=1; }
@@ -292,54 +317,9 @@ jobs:
               check "${job}" '*' skipped
             fi
           done <<< "${ALWAYS}"
-          exit "${status}"
-
-      # The unresolved legs upload no sidecar, and the always leg never
-      # ran detection, so no SBOM artefact in this run may carry one. A
-      # sidecar here would mean a leg vouched for a change it could not
-      # see, which is the failure the fail-closed contract rules out.
-      - name: 'Assert no SBOM artefact carries a sidecar'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          # Keep in step with the legs above: each standard leg uploads
-          # sbom-files-<artifact_suffix>, the multiarch legs
-          # sbom-files-<arch>
-          # yamllint disable-line rule:line-length
-          FAMILIES: 'sbom-files-dependamerge sbom-files-lftools-uv sbom-files-x64 sbom-files-arm64'
-        run: |
-          # Assert no SBOM artefact carries a sidecar
-          set -euo pipefail
-          status=0
-          fail() { echo "::error::$*"; status=1; }
-          # shellcheck source=/dev/null
-          . "${RUNNER_TEMP}/gh-api.sh"
-          api="repos/${REPOSITORY}/actions/runs/${RUN_ID}"
-          artefacts="$(gh_api --paginate "${api}/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.expired | not)
-              | select(.name | test("^sbom-files(-|$)"))
-              | "\(.name) \(.id)"')"
-          for family in ${FAMILIES}; do
-            if ! grep -q "^${family} " <<< "${artefacts}"; then
-              fail "No ${family} artefact in this run"
+          while read -r job; do
+            if [ -n "${job}" ]; then
+              check "${job}" 'Grype gate active: false' success
             fi
-          done
-          while read -r name id; do
-            [ -n "${name}" ] || continue
-            dir="${RUNNER_TEMP}/${name}/${id}"
-            mkdir -p "${dir}"
-            gh api "repos/${REPOSITORY}/actions/artifacts/${id}/zip" \
-              > "${dir}.zip"
-            unzip -q "${dir}.zip" -d "${dir}"
-            if [ ! -f "${dir}/sbom-cyclonedx.json" ]; then
-              fail "${name} ${id} holds no sbom-cyclonedx.json"
-            elif [ -e "${dir}/dependency-change.json" ]; then
-              fail "${name} ${id} carries a sidecar:" \
-                "$(tr -d '\r\n' < "${dir}/dependency-change.json")"
-            else
-              echo "${name} ${id}: SBOM present, no sidecar ✅"
-            fi
-          done <<< "${artefacts}"
+          done <<< "${RESOLVED}"
           exit "${status}"

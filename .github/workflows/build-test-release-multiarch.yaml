@@ -281,6 +281,14 @@ on:
         required: false
         type: string
         default: ''
+      grype_bypass_repository:
+        description: >-
+          Repository, as owner/name, holding the approved CVE bypass
+          issues the Grype scan honours. Empty uses the calling
+          repository.
+        required: false
+        type: string
+        default: ''
 
       # --- CBOM (informational) ---
       # A CBOM records which cryptographic algorithms, key sizes, modes
@@ -556,6 +564,7 @@ jobs:
         id: validate-grype-policy
         shell: bash
         env:
+          GRYPE_FAIL_ON: ${{ inputs.grype_fail_on }}
           GRYPE_DEPENDENCY_POLICY: ${{ inputs.grype_dependency_policy }}
           GRYPE_TRANSITIVE_FAIL_ON: ${{ inputs.grype_transitive_fail_on }}
           GRYPE_ONLY_FIXED: ${{ inputs.grype_only_fixed }}
@@ -563,6 +572,7 @@ jobs:
           GRYPE_REMEDIATION_WINDOW_DAYS: ${{ inputs.grype_remediation_window_days }}
           # yamllint disable-line rule:line-length
           GRYPE_REMEDIATION_WINDOW_START: ${{ inputs.grype_remediation_window_start }}
+          GRYPE_BYPASS_REPOSITORY: ${{ inputs.grype_bypass_repository }}
         run: |
           # grype-scan-action rejects other values too, but only after
           # the build and SBOM jobs have run
@@ -584,6 +594,8 @@ jobs:
             done
             invalid "${name}" "${value}"
           }
+          check grype_fail_on "${GRYPE_FAIL_ON}" \
+            none negligible low medium high critical
           check grype_dependency_policy "${GRYPE_DEPENDENCY_POLICY}" \
             all declared
           check grype_transitive_fail_on "${GRYPE_TRANSITIVE_FAIL_ON}" \
@@ -606,6 +618,12 @@ jobs:
               invalid grype_remediation_window_start \
                 "${GRYPE_REMEDIATION_WINDOW_START}"
             fi
+          fi
+          # Empty uses the calling repository; otherwise owner/name
+          repo_name='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          if [[ -n "${GRYPE_BYPASS_REPOSITORY}" \
+            && ! "${GRYPE_BYPASS_REPOSITORY}" =~ ${repo_name} ]]; then
+            invalid grype_bypass_repository "${GRYPE_BYPASS_REPOSITORY}"
           fi
           exit "${errors}"
 
@@ -702,7 +720,7 @@ jobs:
       - name: 'Gather repository metadata'
         id: repo-metadata
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/repository-metadata-action@2206d754f65f1a90f57b49be546712c5f594def2  # v0.3.3
+        uses: lfreleng-actions/repository-metadata-action@18e5b7c5b16423b0e734891d103513826b324858  # v0.4.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           github_summary: 'true'
@@ -1424,6 +1442,7 @@ jobs:
           permit-fail: ${{ inputs.grype_permit_fail || vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
           # yamllint disable-line rule:line-length
           artifact-name: grype-scan-results${{ inputs.artifact_suffix }}-${{ matrix.target.arch }}
+          bypass-repository: ${{ inputs.grype_bypass_repository }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
   # Informational leg. Nothing downstream reads the CBOM, so this job

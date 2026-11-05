@@ -6,7 +6,8 @@
 #
 # Reproduces the canonical Linux Foundation Python pipeline, fanned out
 # across an architecture matrix (x64 + arm64 by default). The
-# repository-metadata job runs in parallel as an informational step.
+# repository-metadata job runs in parallel; besides its report, it
+# supplies the sbom legs' dependencies-changed verdict for Grype.
 # After python-build the jobs in { } run in parallel; none gates
 # another, so a PR surfaces every failure (-> denotes sequence):
 #   python-metadata -> python-build (matrixed) ->
@@ -232,13 +233,28 @@ on:
         description: >-
           When Grype findings block the job: 'always', or
           'dependencies-changed' to report them as warnings unless the
-          change under review touched a dependency file (pyproject.toml,
-          a lock file, requirements*.txt and the rest of the action's
-          python preset). A change the workflow cannot compare against
-          its base keeps the gate on.
+          change under review touched a dependency file. The
+          repository-metadata job detects that; a change it cannot
+          compare against its base, or a metadata job that failed or
+          skipped, keeps the gate on.
         required: false
         type: string
         default: 'always'
+      grype_dependency_ecosystems:
+        description: >-
+          Comma-separated dependency-change-action presets the
+          dependencies-changed gate watches: node, python, go, maven,
+          gradle, rust, docker. Empty watches every preset.
+        required: false
+        type: string
+        default: ''
+      grype_dependency_patterns:
+        description: >-
+          Extra dependency file patterns, one per line, added to the
+          presets. The detector's pattern grammar applies.
+        required: false
+        type: string
+        default: ''
       grype_dependency_policy:
         description: >-
           Which Grype findings gate: 'all', or 'declared' to gate only
@@ -278,6 +294,14 @@ on:
           Optional YYYY-MM-DD floor for the remediation window clock:
           it starts at the later of the fix date and this date, so an
           existing backlog gets the full window. Empty sets no floor.
+        required: false
+        type: string
+        default: ''
+      grype_bypass_repository:
+        description: >-
+          Repository, as owner/name, holding the approved CVE bypass
+          issues the Grype scan honours. Empty uses the calling
+          repository.
         required: false
         type: string
         default: ''
@@ -553,10 +577,50 @@ jobs:
               ;;
           esac
 
+      - name: 'Validate grype_dependency_ecosystems input'
+        id: validate-grype-dependency-ecosystems
+        shell: bash
+        env:
+          # yamllint disable-line rule:line-length
+          GRYPE_DEPENDENCY_ECOSYSTEMS: ${{ inputs.grype_dependency_ecosystems }}
+        run: |
+          # The detector rejects an unknown preset too, but only once
+          # the repository-metadata job runs. Empty watches every
+          # preset; otherwise each comma-separated name, trimmed, is a
+          # preset of the dependency-change-action that
+          # repository-metadata-action pins
+          value="${GRYPE_DEPENDENCY_ECOSYSTEMS}"
+          if [ -z "${value}" ]; then
+            exit 0
+          fi
+          valid=1
+          if [[ "${value}" == *[$'\r\n']* ]]; then
+            valid=0
+          else
+            rest="${value},"
+            while [ -n "${rest}" ]; do
+              name="${rest%%,*}"
+              rest="${rest#*,}"
+              name="${name#"${name%%[![:space:]]*}"}"
+              name="${name%"${name##*[![:space:]]}"}"
+              case "${name}" in
+                node|python|go|maven|gradle|rust|docker) ;;
+                *) valid=0 ;;
+              esac
+            done
+          fi
+          if [ "${valid}" = 0 ]; then
+            # A newline in the value could forge a workflow command
+            echo "::error::Invalid grype_dependency_ecosystems input:" \
+              "$(printf '%s' "${value}" | tr -d '\r\n')"
+            exit 1
+          fi
+
       - name: 'Validate Grype policy inputs'
         id: validate-grype-policy
         shell: bash
         env:
+          GRYPE_FAIL_ON: ${{ inputs.grype_fail_on }}
           GRYPE_DEPENDENCY_POLICY: ${{ inputs.grype_dependency_policy }}
           GRYPE_TRANSITIVE_FAIL_ON: ${{ inputs.grype_transitive_fail_on }}
           GRYPE_ONLY_FIXED: ${{ inputs.grype_only_fixed }}
@@ -564,6 +628,7 @@ jobs:
           GRYPE_REMEDIATION_WINDOW_DAYS: ${{ inputs.grype_remediation_window_days }}
           # yamllint disable-line rule:line-length
           GRYPE_REMEDIATION_WINDOW_START: ${{ inputs.grype_remediation_window_start }}
+          GRYPE_BYPASS_REPOSITORY: ${{ inputs.grype_bypass_repository }}
         run: |
           # grype-scan-action rejects other values too, but only after
           # the build and SBOM jobs have run
@@ -585,6 +650,8 @@ jobs:
             done
             invalid "${name}" "${value}"
           }
+          check grype_fail_on "${GRYPE_FAIL_ON}" \
+            none negligible low medium high critical
           check grype_dependency_policy "${GRYPE_DEPENDENCY_POLICY}" \
             all declared
           check grype_transitive_fail_on "${GRYPE_TRANSITIVE_FAIL_ON}" \
@@ -607,6 +674,12 @@ jobs:
               invalid grype_remediation_window_start \
                 "${GRYPE_REMEDIATION_WINDOW_START}"
             fi
+          fi
+          # Empty uses the calling repository; otherwise owner/name
+          repo_name='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          if [[ -n "${GRYPE_BYPASS_REPOSITORY}" \
+            && ! "${GRYPE_BYPASS_REPOSITORY}" =~ ${repo_name} ]]; then
+            invalid grype_bypass_repository "${GRYPE_BYPASS_REPOSITORY}"
           fi
           exit "${errors}"
 
@@ -646,6 +719,11 @@ jobs:
       contents: read
       pull-requests: read  # Gather repository/PR metadata
     timeout-minutes: ${{ inputs.metadata_timeout_minutes }}
+    # The dependencies-changed verdict for every sbom leg: 'true' or
+    # 'false' when detection resolved the change, empty otherwise
+    outputs:
+      # yamllint disable-line rule:line-length
+      dependencies_changed: ${{ steps.repo-metadata.outputs.dependencies_changed }}
     steps:
       - name: 'Load egress allow-list'
         # yamllint disable-line rule:line-length
@@ -701,16 +779,26 @@ jobs:
             && 'blob:none' || '' }}
           persist-credentials: false
 
+      # Also detects whether the change touched a dependency file, for
+      # the sbom legs' dependencies-changed gate. This job runs no
+      # project code, and its checkout holds the full history or the
+      # Gerrit change and its parent, which the comparison needs.
       - name: 'Gather repository metadata'
         id: repo-metadata
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/repository-metadata-action@2206d754f65f1a90f57b49be546712c5f594def2  # v0.3.3
+        uses: lfreleng-actions/repository-metadata-action@18e5b7c5b16423b0e734891d103513826b324858  # v0.4.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           github_summary: 'true'
           gerrit_summary: ${{ inputs.gerrit_refspec != '' }}
           artifact_upload: 'true'
           artifact_formats: 'json'
+          # yamllint disable-line rule:line-length
+          dependency_change: ${{ inputs.grype_enabled && inputs.grype_gate_when == 'dependencies-changed' }}
+          gerrit_refspec: ${{ inputs.gerrit_refspec }}
+          dependency_ecosystems: ${{ inputs.grype_dependency_ecosystems }}
+          dependency_patterns: ${{ inputs.grype_dependency_patterns }}
+          dependency_path_prefix: ${{ inputs.path_prefix }}
 
   python-metadata:
     name: 'Extract Project Metadata'
@@ -1161,10 +1249,13 @@ jobs:
   # PR variant: gate SBOM/Grype on python-metadata too (like
   # tests/audit), so a single failed build cell does not hide
   # security findings. (The release variant keeps strict
-  # python-build gating.)
+  # python-build gating.) repository-metadata supplies the in-leg
+  # Grype step's dependencies-changed verdict; the if: below
+  # tolerates its failure or skip, which leaves the verdict empty and
+  # keeps the gate on.
   sbom:
     name: 'SBOM ${{ matrix.target.arch }}'
-    needs: ['python-metadata', 'python-build']
+    needs: ['python-metadata', 'python-build', 'repository-metadata']
     # yamllint disable-line rule:line-length
     if: ${{ !cancelled() && needs.python-metadata.result == 'success' && inputs.sbom_enabled }}
     strategy:
@@ -1219,10 +1310,6 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
-          # dependency-change-action compares HEAD with its parent, so
-          # the depth stays at 2 or more; the Gerrit checkout fetches
-          # that depth by default. testing.yaml asserts both.
-          fetch-depth: 2
           persist-credentials: false
 
       - name: 'Validate setup script path'
@@ -1245,26 +1332,6 @@ jobs:
             exit 1
           fi
           bash "${SETUP_SCRIPT}"
-
-      # Writes dependency-change.json beside the SBOM for this leg's
-      # dependencies-changed gate, only when it resolved what the
-      # change touched. Every path it cannot vouch for writes no file,
-      # which the Grype step reads as unresolved, keeping the gate on.
-      # It reads git objects alone, so nothing the setup script or the
-      # SBOM generator writes to the tree affects it. Each leg detects
-      # for itself: the answer is the same on every arch, but a file
-      # per leg keeps each leg self-contained.
-      - name: 'Detect dependency changes'
-        id: dependency-change
-        # yamllint disable-line rule:line-length
-        if: inputs.grype_enabled && inputs.grype_gate_when == 'dependencies-changed'
-        # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/dependency-change-action@257928b15e4e6a5cc5a888435be59b058055c4e1  # v0.0.1
-        with:
-          ecosystems: 'python'
-          path-prefix: ${{ inputs.path_prefix }}
-          gerrit-refspec: ${{ inputs.gerrit_refspec }}
-          output: 'dependency-change.json'
 
       - name: 'Generate SBOM ${{ matrix.target.arch }}'
         id: sbom
@@ -1298,13 +1365,8 @@ jobs:
         with:
           # yamllint disable-line rule:line-length
           name: sbom-files${{ inputs.artifact_suffix }}-${{ matrix.target.arch }}
-          # Glob matches whichever SBOM formats sbom_format produced.
-          # The dependency-change sidecar travels in the same artefact
-          # as the record of this leg's signal; an unresolved result
-          # writes none, and the SBOM still matches
-          path: |
-            sbom-cyclonedx.*
-            dependency-change.json
+          # Glob matches whichever SBOM formats sbom_format produced
+          path: 'sbom-cyclonedx.*'
           retention-days: 45
           if-no-files-found: warn
 
@@ -1314,17 +1376,12 @@ jobs:
           TARGET_ARCH: ${{ matrix.target.arch }}
           SBOM_COMPONENT_COUNT: ${{ steps.sbom.outputs.component_count }}
           SBOM_DEPENDENCY_MANAGER: ${{ steps.sbom.outputs.dependency_manager }}
-          DEPENDENCY_CHANGE: ${{ steps.dependency-change.outputs.reason }}
         run: |
           # SBOM summary
           {
             echo "## SBOM Summary ($TARGET_ARCH)"
             echo "SBOM count: ${SBOM_COMPONENT_COUNT}"
             echo "Tool used: ${SBOM_DEPENDENCY_MANAGER}"
-            if [ -n "${DEPENDENCY_CHANGE}" ]; then
-              echo ""
-              echo "Dependency change: ${DEPENDENCY_CHANGE}"
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       # The grype_permit_fail input (or, when unset, the NO_BLOCK_AUDIT_FAIL
@@ -1345,10 +1402,13 @@ jobs:
           dependency-policy: ${{ inputs.grype_dependency_policy }}
           transitive-fail-on: ${{ inputs.grype_transitive_fail_on }}
           gate-when: ${{ inputs.grype_gate_when }}
-          # Read from the working directory, where the detection step
-          # above wrote it when it resolved the change; an absent
-          # manifest keeps the gate on
-          dependency-change-manifest: 'dependency-change.json'
+          # The verdict only when repository-metadata succeeded: a
+          # failed job can still expose an output an earlier step
+          # wrote. Empty, as unresolved detection leaves it, gates.
+          # Every leg reads the same verdict: it describes the change,
+          # not the architecture
+          # yamllint disable-line rule:line-length
+          dependencies-changed: ${{ needs.repository-metadata.result == 'success' && needs.repository-metadata.outputs.dependencies_changed || '' }}
           # yamllint disable-line rule:line-length
           remediation-window-days: ${{ inputs.grype_remediation_window_days }}
           # yamllint disable-line rule:line-length
@@ -1357,6 +1417,7 @@ jobs:
           permit-fail: ${{ inputs.grype_permit_fail || vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
           # yamllint disable-line rule:line-length
           artifact-name: grype-scan-results${{ inputs.artifact_suffix }}-${{ matrix.target.arch }}
+          bypass-repository: ${{ inputs.grype_bypass_repository }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The action's summary gives the gate's reason only when it
