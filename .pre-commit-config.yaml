@@ -164,9 +164,12 @@ repos:
 
   # Drift check for the harden-runner allow-list inputs: every reusable
   # workflow using harden-runner-block-action exposes the same five
-  # harden_runner_* inputs and passes each through. 'language: python'
-  # for PyYAML, with an explicit bash so the file needs no executable
-  # bit.
+  # harden_runner_* inputs and passes each through. Every block-action
+  # step in the repository pins one SHA, with one '# vX.Y.Z' comment,
+  # at or above v0.15.0; each input's description is the reference
+  # wording, optionally followed by '. ' and a note about the workflow.
+  # 'language: python' for PyYAML, with an explicit bash so the file
+  # needs no executable bit.
   - repo: local
     hooks:
       - id: harden-runner-inputs
