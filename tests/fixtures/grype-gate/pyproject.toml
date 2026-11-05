@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# The project the fixture leg of testing.yaml builds. It lives in this
+# repository so that leg's repository-metadata job checks out the pull
+# request itself and can resolve the change. It declares no
+# dependencies, and nothing in or above this directory matches the
+# docker preset the leg watches.
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grype-gate-fixture"
+version = "0.0.1"
+description = "Fixture for the dependencies-changed Grype gate self-test"
+requires-python = ">=3.11"
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]

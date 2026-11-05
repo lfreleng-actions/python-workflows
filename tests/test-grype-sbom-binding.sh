@@ -7,13 +7,11 @@
 #
 # Artefact names are unique per run only until a second call of the
 # same workflow uploads under the same name. A Grype job that
-# downloads its SBOM by name can then read another call's SBOM, and in
-# the verify workflows its dependency-change sidecar too, which decides
-# whether findings block. So the single-arch workflows export the
-# upload step's artifact-id from the sbom job and the grype job
-# downloads by that ID; the multi-arch workflows scan the SBOM in the
-# leg that generated it and download nothing, because a matrix job
-# cannot export one ID per leg.
+# downloads its SBOM by name can then read another call's SBOM. So the
+# single-arch workflows export the upload step's artifact-id from the
+# sbom job and the grype job downloads by that ID; the multi-arch
+# workflows scan the SBOM in the leg that generated it and download
+# nothing, because a matrix job cannot export one ID per leg.
 #
 # An empty ID is no binding either: download-artifact given neither a
 # name nor an ID downloads every artefact in the run. So a step before

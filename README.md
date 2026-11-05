@@ -176,19 +176,21 @@ default, empty, leaves the names unchanged.
 
 The `grype` job (the in-leg Grype step, in the multi-arch variants)
 scans the SBOM with [grype-scan-action][grype-scan-action] and fails
-on a match at or above `grype_fail_on`. Six inputs shape which matches
+on a match at or above `grype_fail_on`. Eight inputs shape which matches
 count and when the verdict gates:
 
 <!-- markdownlint-disable MD013 -->
 
-| Name                             | Type    | Default    | Description                                                                                                                    |
-| -------------------------------- | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `grype_gate_when`                | string  | `always`   | `always` gates every run; `dependencies-changed` gates a change that touches a dependency file (pull request flows; see below) |
-| `grype_dependency_policy`        | string  | `declared` | `declared` applies `grype_fail_on` to direct dependencies and `grype_transitive_fail_on` to the rest; `all` treats both alike  |
-| `grype_transitive_fail_on`       | string  | `critical` | Severity that fails on a transitive dependency under the `declared` policy (`negligible` … `critical`, or `none`)              |
-| `grype_only_fixed`               | boolean | `true`     | Count matches with a fix available; a match no upgrade can clear appears in the report but never gates                         |
-| `grype_remediation_window_days`  | string  | `''`       | On an unarmed `dependencies-changed` run, days after a match's fix date during which it warns instead of fails; empty disables |
-| `grype_remediation_window_start` | string  | `''`       | Optional `YYYY-MM-DD` floor for the window clock: it starts at the later of this date and the fix date                         |
+| Name                             | Type    | Default    | Description                                                                                                                                         |
+| -------------------------------- | ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grype_gate_when`                | string  | `always`   | `always` gates every run; `dependencies-changed` gates a change that touches a dependency file (pull request flows; see below)                      |
+| `grype_dependency_ecosystems`    | string  | `''`       | Comma-separated presets the `dependencies-changed` verdict watches (`node`, `python`, `go`, `maven`, `gradle`, `rust`, `docker`); empty watches all |
+| `grype_dependency_patterns`      | string  | `''`       | Extra dependency-file patterns, one per line, added to the presets                                                                                  |
+| `grype_dependency_policy`        | string  | `declared` | `declared` applies `grype_fail_on` to direct dependencies and `grype_transitive_fail_on` to the rest; `all` treats both alike                       |
+| `grype_transitive_fail_on`       | string  | `critical` | Severity that fails on a transitive dependency under the `declared` policy (`negligible` … `critical`, or `none`)                                   |
+| `grype_only_fixed`               | boolean | `true`     | Count matches with a fix available; a match no upgrade can clear appears in the report but never gates                                              |
+| `grype_remediation_window_days`  | string  | `''`       | On an unarmed `dependencies-changed` run, days after a match's fix date during which it warns instead of fails; empty disables                      |
+| `grype_remediation_window_start` | string  | `''`       | Optional `YYYY-MM-DD` floor for the window clock: it starts at the later of this date and the fix date                                              |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -202,25 +204,32 @@ names a root component; when it does not, every match counts as
 declared and `grype_fail_on` applies to each. The gate then
 relies on `grype_gate_when` for relief, not on the policy.
 
-With `grype_gate_when: 'dependencies-changed'`, the `sbom` job runs
-[dependency-change-action][dependency-change-action] before it
-generates the SBOM and uploads the result as `dependency-change.json`
-beside the SBOM files. The Grype step reads that manifest and gates
-when it reports a change to a dependency file, or when the manifest
-is absent or unresolved: the action fails closed, so a comparison it cannot make
-(a `repository` or `ref` input naming another tree, a shallow checkout,
-a symlinked dependency file) keeps the gate on. The action's README
-documents the detection rules, the `python` ecosystem preset, the
-base-commit rules and the fail-closed contract. A step named
-`Grype gate active: <true|false>` in the Grype job's log shows the
-outcome. The `gerrit-validate` job rejects a `grype_gate_when` value
-outside `always` and `dependencies-changed`, a policy or severity
-outside the action's vocabulary, and a window whose days value is not an
-integer or whose start is not a real calendar date.
+With `grype_gate_when: 'dependencies-changed'`, the
+`repository-metadata` job, which already compares the change with its
+base, also asks
+[repository-metadata-action][repository-metadata-action-deps] whether
+the change touches a dependency file under `path_prefix` (or one
+anchored above it, such as a workspace lock file). It exports the
+verdict as its `dependencies_changed` output, and the Grype step
+passes it to grype-scan-action as `dependencies-changed`. Detection
+watches every ecosystem preset unless `grype_dependency_ecosystems`
+narrows it, and `grype_dependency_patterns` adds patterns of its own;
+the action's README documents the presets, the pattern syntax and the
+base-commit rules. The verdict fails closed: a comparison the action
+cannot make (a `repository` or `ref` input naming another tree, a
+symlinked dependency file) gives an empty verdict, and a skipped or
+failed `repository-metadata` job passes an empty one too, so the gate
+stays on unless the job proved the change left every dependency file
+alone. A step named `Grype gate active: <true|false>` in the Grype
+job's log shows the outcome. The `gerrit-validate` job rejects a
+`grype_gate_when` value outside `always` and `dependencies-changed`,
+an ecosystem outside the presets, a policy or severity outside the
+action's vocabulary, and a window whose days value is not an integer
+or whose start is not a real calendar date.
 
 The remediation window bounds the leniency of an unarmed run in time.
 It applies to one kind of run: `grype_gate_when` is
-`dependencies-changed`, the manifest resolved, and the change left
+`dependencies-changed`, the verdict resolved, and the change left
 every dependency file alone. Every other run, including an `always`
 run and an unresolved one, ignores the window and gates. Within an
 unarmed run the clock is per match: a match with a fix stays a warning
@@ -234,14 +243,15 @@ adopting the window can name the adoption day and give an existing
 backlog the full window instead of gating on it at once. It must not
 be in the future; grype-scan-action enforces that.
 
-The release variants take every input but `grype_gate_when`: a release
-scans everything it ships, so the gate is always on. They accept the
+The release variants take every input but `grype_gate_when` and the
+two detection inputs: a release scans everything it ships, so the gate
+is always on. They accept the
 remediation window for parity with the pull request flows so a caller
 can set one block of `grype_*` inputs for both; it has no effect on a
 release verdict, and grype-scan-action still reports the window.
 
 [grype-scan-action]: https://github.com/lfreleng-actions/grype-scan-action
-[dependency-change-action]: https://github.com/lfreleng-actions/dependency-change-action
+[repository-metadata-action-deps]: https://github.com/lfreleng-actions/repository-metadata-action#dependency-change-detection
 
 ### Repository metadata
 
@@ -478,16 +488,18 @@ and name the caller's workflow, not this one.
 
 [`.github/workflows/testing.yaml`](.github/workflows/testing.yaml) exercises
 the reusable workflows against three large downstream consumers
-(`dependamerge`, `lftools-uv` and `python-nss-ng`) in parallel, validating
-the workflows end-to-end on every pull request. The `dependamerge` and
+(`dependamerge`, `lftools-uv` and `python-nss-ng`) and an in-repository
+fixture (`tests/fixtures/grype-gate`) in parallel, validating the
+workflows end-to-end on every pull request. The `dependamerge` and
 `python-nss-ng` legs run with `grype_gate_when: 'dependencies-changed'`;
-each builds another repository, so the action cannot resolve the
-change and the gate must stay on. The `grype-gate-assert` job reads the
-run's jobs and SBOM artefacts to prove that it did and that no leg
-uploaded a sidecar. The
+each builds another repository, so the verdict cannot resolve and the
+gate must stay on. The fixture leg builds this pull request itself and
+watches the `docker` preset alone, which nothing in the fixture
+matches: the verdict resolves to `false` and the gate must drop. The
+`grype-gate-assert` job reads the run's jobs to prove both. The
 `grype-gate-wiring` job runs `tests/test-grype-gate-inputs.sh`, which
-checks the Grype gate wiring in all four workflows and drives the shared
-input validation step against the values it must reject, and
+checks the Grype gate wiring in all four workflows and drives the
+input validation steps against the values they must reject, and
 `tests/test-grype-sbom-binding.sh`, which fails if any Grype scan reads
 an SBOM artefact selected by name rather than its own call's upload;
 both scripts run as pre-commit hooks.
