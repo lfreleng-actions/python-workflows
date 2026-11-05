@@ -99,10 +99,18 @@ def needs_of(job):
     return [needs] if isinstance(needs, str) else list(needs)
 
 
+def scans(job):
+    """The Grype steps in a job that scan. The validate-only call in
+    gerrit-validate checks inputs and reads no SBOM, so it binds to
+    no upload."""
+    return [s for s in steps_using(job, GRYPE)
+            if (s.get("with") or {}).get("validate-only") != "true"]
+
+
 def find_scan(doc):
     """Return (job id, job) for the one job holding a Grype scan."""
     found = [(job_id, job) for job_id, job in (doc.get("jobs") or {}).items()
-             if steps_using(job, GRYPE)]
+             if scans(job)]
     return found[0] if len(found) == 1 else (None, None)
 
 
@@ -231,6 +239,12 @@ def guard_step(doc):
 
 def separate_mutants(doc):
     """Yield (label, mutated doc) for a workflow with a grype job."""
+    d = copy.deepcopy(doc)
+    # A validator that leaves validate-only mode is a second scan,
+    # in a job that neither uploads nor downloads the SBOM
+    validator = steps_using(d["jobs"]["gerrit-validate"], GRYPE)[0]
+    del validator["with"]["validate-only"]
+    yield "validator scans", d
     d = copy.deepcopy(doc)
     given = download_step(d)["with"]
     del given["artifact-ids"]

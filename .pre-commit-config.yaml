@@ -181,8 +181,10 @@ repos:
   # Wiring check for the Grype gate policy inputs and the
   # dependencies-changed verdict: detection in the repository-metadata
   # job and its checkout depth, the guarded job output that reaches
-  # grype-scan-action, the policy and detection inputs and their
-  # gerrit-validate steps. Same shape as the hook above.
+  # grype-scan-action, the policy and detection inputs, and the
+  # gerrit-validate steps that check them: the validate-only call,
+  # held to the scan's pin and inputs, and the ecosystem shell step.
+  # Same shape as the hook above.
   - repo: local
     hooks:
       - id: grype-gate-inputs
