@@ -730,10 +730,12 @@ jobs:
       build_python_version: ${{ steps.python-build.outputs.build_python_version }}
       artefact_name: ${{ steps.python-build.outputs.artefact_name }}
       artefact_path: ${{ steps.python-build.outputs.artefact_path }}
+      artefact_digests: ${{ steps.artefact-digests.outputs.digests }}
+    # This job runs the project's own build code (setup.py, build
+    # backend hooks, make, tox), so it holds no OIDC token: the
+    # attest-sign job attests and signs what it uploads.
     permissions:
       contents: read
-      id-token: write       # Needed for attestations
-      attestations: write   # Needed for attestations
     timeout-minutes: ${{ inputs.build_timeout_minutes }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -801,8 +803,179 @@ jobs:
           path_prefix: ${{ inputs.path_prefix }}
           build_formats: ${{ inputs.build_formats || 'both' }}
           tox_build: ${{ inputs.tox_build }}
-          sigstore_sign: ${{ inputs.sigstore_sign }}
-          attestations: ${{ inputs.attestations }}
+          # attest-sign does both, away from the project's build code
+          sigstore_sign: 'false'
+          attestations: 'false'
+
+      # attest-sign checks its download against these, so it attests
+      # and signs exactly the files this job built. upload-artifact
+      # skips hidden files, so the list does too.
+      - name: 'Record artefact digests'
+        id: artefact-digests
+        shell: bash
+        env:
+          ARTEFACT_PATH: ${{ steps.python-build.outputs.artefact_path }}
+        run: |
+          # Record a SHA-256 digest for each uploaded build artefact
+          set -euo pipefail
+          cd "${ARTEFACT_PATH}"
+          digests="$(find . -type f ! -path '*/.*' -print0 \
+            | LC_ALL=C sort -z | xargs -0 -r sha256sum)"
+          if [ -z "${digests}" ]; then
+            echo "::error::No build artefacts in ${ARTEFACT_PATH}"
+            exit 1
+          fi
+          printf '%s\n' "${digests}"
+          delimiter="EOF_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "digests<<${delimiter}"
+            printf '%s\n' "${digests}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+  # Attestation and signing need the job's OIDC token, which any code
+  # in the job could request. python-build runs the project's own build
+  # code, so it holds no token; this job holds one and runs no project
+  # code. It checks nothing out and handles only the files python-build
+  # uploaded, after matching them against the digests that job
+  # recorded. Signing adds a <file>.sigstore.json bundle beside each
+  # file, so the signed set replaces the build artefact under the same
+  # name, which python-audit, attach-artefacts and the caller's publish
+  # jobs download.
+  attest-sign:
+    name: 'Attest and Sign Artefacts'
+    needs: 'python-build'
+    runs-on: 'ubuntu-latest'
+    outputs:
+      artefact_name: ${{ needs.python-build.outputs.artefact_name }}
+    permissions:
+      contents: read
+      id-token: write       # Needed for attestations and signing
+      attestations: write   # Needed for attestations
+    timeout-minutes: 10
+    steps:
+      - name: 'Load egress allow-list'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@2fed66c9c36c4687c31ca349b925b81ec629673f  # v0.15.0
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+          # yamllint disable-line rule:line-length
+          supplemental_config: ${{ inputs.harden_runner_supplemental_allowlist }}
+          # A caller naming a list depends on it, so its absence fails
+          # here rather than at the first blocked connection.
+          # yamllint disable-line rule:line-length
+          supplemental_required: ${{ inputs.harden_runner_supplemental_allowlist != '' && 'true' || 'false' }}
+          # yamllint disable-line rule:line-length
+          supplemental_unpinned: ${{ inputs.harden_runner_supplemental_unpinned && 'true' || 'false' }}
+          extra_endpoints: ${{ inputs.harden_runner_extra_endpoints }}
+          allow_list_summary: 'false'
+      - name: 'Harden runner'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+        with:
+          # yamllint disable-line rule:line-length
+          egress-policy: ${{ inputs.harden_runner_egress == 'audit' && 'audit' || 'block' }}
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: '⬇ Download build artefacts'
+        # yamllint disable-line rule:line-length
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: ${{ needs.python-build.outputs.artefact_name }}
+          path: 'dist'
+
+      # Every downloaded file counts, hidden ones included: the build's
+      # upload skips them, so one here was not built, and attest would
+      # otherwise cover it through dist/*. A re-run downloads the set
+      # an earlier attempt signed, so the bundle beside each file is
+      # dropped first and the file signed again.
+      - name: 'Verify artefact digests'
+        shell: bash
+        env:
+          EXPECTED_DIGESTS: ${{ needs.python-build.outputs.artefact_digests }}
+        run: |
+          # Fail unless dist/ holds exactly the files python-build hashed
+          set -euo pipefail
+          expected="$(printf '%s' "${EXPECTED_DIGESTS}")"
+          if [ -z "${expected}" ]; then
+            echo "::error::python-build recorded no artefact digests"
+            exit 1
+          fi
+          cd dist
+          while IFS= read -r -d '' bundle; do
+            if [ -f "${bundle%.sigstore.json}" ]; then
+              echo "Dropping earlier signature ${bundle}"
+              rm -f -- "${bundle}"
+            fi
+          done < <(find . -type f -name '*.sigstore.json' -print0)
+          if [ -n "$(find . ! -type f ! -type d -print -quit)" ]; then
+            echo "::error::Downloaded artefacts hold non-regular files"
+            exit 1
+          fi
+          actual="$(find . -type f -print0 \
+            | LC_ALL=C sort -z | xargs -0 -r sha256sum)"
+          if ! diff <(printf '%s\n' "${expected}") \
+              <(printf '%s\n' "${actual}"); then
+            echo "::error::Downloaded artefacts differ from the build"
+            exit 1
+          fi
+          echo "Verified build artefacts:"
+          printf '%s\n' "${actual}"
+
+      - name: 'Attest build provenance'
+        if: inputs.attestations
+        # yamllint disable-line rule:line-length
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: 'dist/*'
+
+      # Signs the formats build_formats asked for, as python-build-action
+      # did when it signed in the build job.
+      - name: 'Select files to sign'
+        id: sign-files
+        if: inputs.sigstore_sign
+        shell: bash
+        env:
+          BUILD_FORMATS: ${{ inputs.build_formats || 'both' }}
+        run: |
+          # List the wheels and sdists to sign
+          set -euo pipefail
+          shopt -s nullglob
+          files=()
+          if [ "${BUILD_FORMATS}" != 'wheel' ]; then
+            files+=(dist/*.tar.gz)
+          fi
+          if [ "${BUILD_FORMATS}" != 'sdist' ]; then
+            files+=(dist/*.whl)
+          fi
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No files found to sign"
+            exit 1
+          fi
+          {
+            echo 'files<<EOF_FILES'
+            printf '%s\n' "${files[@]}"
+            echo 'EOF_FILES'
+          } >> "$GITHUB_OUTPUT"
+      - name: 'Sign artefacts with Sigstore'
+        if: inputs.sigstore_sign
+        # yamllint disable-line rule:line-length
+        uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9  # v3.5.0
+        with:
+          inputs: ${{ steps.sign-files.outputs.files }}
+
+      # Attestation leaves the files untouched, so only signing, which
+      # adds the bundles, needs the artefact replaced.
+      - name: 'Upload signed artefacts'
+        if: inputs.sigstore_sign
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: ${{ needs.python-build.outputs.artefact_name }}
+          path: 'dist'
+          if-no-files-found: error
+          overwrite: true
 
   python-tests:
     name: 'Python Tests'
@@ -897,9 +1070,14 @@ jobs:
   python-audit:
     name: 'Python Audit'
     runs-on: 'ubuntu-latest'
-    needs: 'python-build'
+    # python-audit-action downloads the build artefact, which
+    # attest-sign replaces once signed; waiting for it avoids reading
+    # the artefact mid-replacement.
+    needs:
+      - 'python-build'
+      - 'attest-sign'
     # yamllint disable-line rule:line-length
-    if: ${{ !cancelled() && needs.python-build.result == 'success' && inputs.audit_enabled }}
+    if: ${{ !cancelled() && needs.python-build.result == 'success' && needs.attest-sign.result == 'success' && inputs.audit_enabled }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.python-build.outputs.matrix_json) }}
@@ -1363,6 +1541,7 @@ jobs:
     needs:
       - 'tag-validate'
       - 'python-build'
+      - 'attest-sign'
       - 'python-tests'
       - 'python-audit'
       - 'sbom'
@@ -1372,7 +1551,7 @@ jobs:
     # never a failure (a failed test run, audit, SBOM or Grype scan
     # blocks the release here)
     # yamllint disable-line rule:line-length
-    if: ${{ !cancelled() && needs.python-build.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.python-tests.result) && (needs.python-audit.result == 'success' || (needs.python-audit.result == 'skipped' && !inputs.audit_enabled)) && (needs.sbom.result == 'success' || (needs.sbom.result == 'skipped' && !inputs.sbom_enabled)) && (needs.grype.result == 'success' || (needs.grype.result == 'skipped' && (!inputs.grype_enabled || !inputs.sbom_enabled))) }}
+    if: ${{ !cancelled() && needs.python-build.result == 'success' && needs.attest-sign.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.python-tests.result) && (needs.python-audit.result == 'success' || (needs.python-audit.result == 'skipped' && !inputs.audit_enabled)) && (needs.sbom.result == 'success' || (needs.sbom.result == 'skipped' && !inputs.sbom_enabled)) && (needs.grype.result == 'success' || (needs.grype.result == 'skipped' && (!inputs.grype_enabled || !inputs.sbom_enabled))) }}
     permissions:
       contents: write  # IMPORTANT: needed to edit release, attach artefacts
     timeout-minutes: 5
@@ -1428,7 +1607,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          name: ${{ needs.python-build.outputs.artefact_name }}
+          name: ${{ needs.attest-sign.outputs.artefact_name }}
           path: ${{ needs.python-build.outputs.artefact_path }}
 
       - name: 'Attach build artefacts to release'
