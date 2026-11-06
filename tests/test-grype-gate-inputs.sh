@@ -67,7 +67,7 @@ import sys
 import yaml
 
 METADATA = "lfreleng-actions/repository-metadata-action"
-METADATA_PIN = "18e5b7c5b16423b0e734891d103513826b324858"  # v0.4.0
+METADATA_PIN = "f0e5d2d8dc1154a5d702b75acc551eff6ba072dc"  # v0.5.1
 GRYPE = "lfreleng-actions/grype-scan-action"
 GRYPE_PIN = "f65dca2762823cfc8f376e32fee9baa6f3292696"  # v0.6.2
 # The detection wiring this replaced: none of it may come back
