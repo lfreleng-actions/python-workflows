@@ -44,10 +44,26 @@ until `python-audit` and `grype` have both passed**, so a failing audit
 skips the expensive test matrix and never reaches release promotion:
 
 ```text
-python-build -> { python-audit | sbom -> grype } -> python-tests
-  -> attach-artefacts -> promote-release
+python-build -> { attest-sign -> python-audit | sbom -> grype }
+  -> python-tests -> attach-artefacts -> promote-release
 python-build -> cbom
 ```
+
+The release variants also keep the project's build code away from the
+OIDC token that attestation and signing use. `python-build` builds with
+`contents: read` and no token; `attest-sign` holds the token, runs
+no project code, and attests and signs the files `python-build`
+uploaded, replacing the build artefact with the signed set under the
+same name. `attest-sign` first checks that download against SHA-256
+digests `python-build` records, and fails on any file the build did not
+hash, hidden files included. A re-run of `attest-sign` drops the
+signatures an earlier attempt added and signs the same files again.
+The multi-arch variant records each build leg's digests in a separate
+job output, so it caps the matrix at 32 legs (`runners` entries times
+Python versions). Its `python-audit`, `sbom` and `python-tests` jobs
+also wait for `attest-sign`, so no project code but the build legs runs
+before signing. `python-audit` waits for it in both variants, because
+it downloads the artefact `attest-sign` replaces.
 
 ### PyPI publishing is the caller's responsibility
 
@@ -410,10 +426,11 @@ With the `attestations` and `sigstore_sign` inputs at their default of
 `true`, the release workflows attest every wheel and sdist with SLSA
 build provenance and sign each one with Sigstore. They attach the
 artefacts to the GitHub release, each with its `<file>.sigstore.json`
-bundle. Both steps run inside this reusable workflow, so the Sigstore
-certificate behind each one names the reusable workflow as the signer.
-The calling run's repository and tag appear in the GitHub extensions
-of the certificate, not in its identity:
+bundle. Both steps run inside this reusable workflow, in its
+`attest-sign` job, so the Sigstore certificate behind each one names
+the reusable workflow as the signer. The calling run's repository and
+tag appear in the GitHub extensions of the certificate, not in its
+identity:
 
 <!-- markdownlint-disable MD013 -->
 
