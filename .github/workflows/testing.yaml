@@ -15,7 +15,7 @@
 # running, so the workflows under test are always the ones this
 # branch defines. The standard targets are
 # checked out at their default/HEAD branch; the python-nss-ng leg is
-# pinned to the v1.2.0 release commit (see ref: below).
+# pinned to the v1.3.6 release commit (see ref: below).
 #
 # The dependamerge and python-nss-ng legs run the dependencies-changed
 # Grype gate. Each builds another repository, which the
@@ -87,7 +87,7 @@ jobs:
   #
   # python-nss-ng provides the committed native setup script
   # (.github/scripts/setup-nss.sh) consumed via the setup_script input.
-  # Pinned to the v1.2.0 release commit of the upstream repository.
+  # Pinned to the v1.3.6 release commit of the upstream repository.
   multiarch:
     name: 'Multi-Arch'
     permissions:
@@ -96,7 +96,7 @@ jobs:
     uses: $/.github/workflows/build-test-multiarch.yaml
     with:
       repository: lfreleng-actions/python-nss-ng
-      ref: e6e197516189faac861f191a6a48f0e1d993ef3d  # v1.2.0
+      ref: 74011d9ba5167d00daa1cbc1910a77b54b895254  # v1.3.6
       make: true
       make_args: 'deps-nss env-github-actions'
       setup_script: '.github/scripts/setup-nss.sh'
