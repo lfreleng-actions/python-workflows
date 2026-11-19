@@ -138,7 +138,9 @@ jobs:
   # ecosystem validation step, which it extracts and drives against
   # every value it must reject.
   # tests/test-grype-sbom-binding.sh proves the scan reads its own
-  # call's artefact. Both scripts run as pre-commit hooks.
+  # call's artefact. Both scripts run as pre-commit hooks. The job also
+  # runs tests/test-python-metadata.sh, which proves every workflow
+  # takes its Python versions from one pinned python-metadata job.
   grype-gate-wiring:
     name: 'Test: Grype gate wiring'
     runs-on: ubuntu-latest
@@ -187,6 +189,20 @@ jobs:
             exit 1
           fi
           echo "Grype scan bound to its SBOM ✅" >> "$GITHUB_STEP_SUMMARY"
+
+      # The standard and multi-arch legs must agree on the Python
+      # versions a project supports, so all four workflows resolve them
+      # through the same pinned build-metadata-action call, and nothing
+      # reads them from python-build-action's embedded copy.
+      - name: 'Assert the Python versions come from python-metadata'
+        shell: bash
+        run: |
+          # Assert the Python versions come from python-metadata
+          if ! bash tests/test-python-metadata.sh; then
+            echo "Python version source incorrect ❌" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Python version source correct ✅" >> "$GITHUB_STEP_SUMMARY"
 
   # Proves the gate verdicts from the run itself, not just that the job
   # graph went green. Each consumer dependencies-changed leg builds

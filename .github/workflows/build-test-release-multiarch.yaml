@@ -867,6 +867,8 @@ jobs:
         shell: bash
         env:
           MATRIX_JSON: ${{ steps.metadata.outputs.python_matrix_json }}
+          # yamllint disable-line rule:line-length
+          REQUIRES_PYTHON_FALLBACK: ${{ steps.metadata.outputs.python_requires_python_fallback }}
           RUNNERS: ${{ inputs.runners }}
         run: |
           # Derive the bare JSON array of Python versions
@@ -879,6 +881,10 @@ jobs:
           if [ "${legs}" -gt 32 ]; then
             echo "::error::${legs} build legs exceed the limit of 32"
             exit 1
+          fi
+          if [ "${REQUIRES_PYTHON_FALLBACK}" = 'true' ]; then
+            echo "::warning::No usable requires-python in the project" \
+              "metadata; the Python versions are a fallback range"
           fi
           echo "versions_json=${versions}" >> "$GITHUB_OUTPUT"
 

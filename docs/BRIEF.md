@@ -306,7 +306,8 @@ callers for the publish-job pattern.
 
 **Decision:**
 
-- Reproduce the **full** dependamerge graph faithfully. After
+- Reproduce the **full** dependamerge graph faithfully, with a
+  `python-metadata` job ahead of `python-build` (see Q12). After
   `python-build`, three branches run in parallel - `python-tests`,
   `python-audit`, and `sbom` → `grype` - none gating another, so a PR
   run surfaces every failure. (In the release variants the publishing
@@ -340,8 +341,14 @@ callers for the publish-job pattern.
 - A separate `python-metadata` job (using `build-metadata-action`) runs
   first to emit the version matrix (the per-arch builds need it up front).
 - **SBOM + Grype run per-arch** (native dependency trees differ per arch).
-- The structural asymmetry between standard (matrix from `python-build`
-  output) and multi-arch (separate `python-metadata` job) is accepted.
+- The standard variants share this structure: their `python-metadata`
+  job calls the same pinned `build-metadata-action` with the same
+  inputs, and supplies the tests and audit matrix and the build and
+  SBOM interpreter. No job reads them from `python-build`, whose
+  embedded copy of `build-metadata-action` can resolve a different
+  range, so the standard and multi-arch variants always agree on the
+  Python versions a project supports. `tests/test-python-metadata.sh`
+  holds all four workflows to this.
 - **Downstream gating differs by intent.** Because `python-build` is a
   matrix (arch × version), gating tests/audit on its aggregate result
   would skip the whole downstream matrix when any one cell fails. The
