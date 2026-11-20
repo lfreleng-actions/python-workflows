@@ -29,13 +29,18 @@ every Python repository.
 <!-- markdownlint-enable MD013 -->
 
 Each pipeline runs a `repository-metadata` job in parallel (an
-informational step that does not gate the build). After `python-build`,
+informational step that does not gate the build). A `python-metadata`
+job runs first and resolves the Python versions the project supports
+from its `requires-python`, through one pinned `build-metadata-action`
+shared by all four workflows: the test and audit jobs run one leg per
+version, and the build and SBOM use the newest. After `python-build`,
 the test, audit and SBOM/Grype branches run in parallel - none gates
 another, so a pull request surfaces every failure at once (jobs in
 `{ }` run concurrently; `->` denotes sequence):
 
 ```text
-python-build -> { python-tests | python-audit | sbom -> grype | cbom }
+python-metadata -> python-build ->
+  { python-tests | python-audit | sbom -> grype | cbom }
 ```
 
 The release variants wrap this with `tag-validate` up front and a
@@ -44,7 +49,8 @@ until `python-audit` and `grype` have both passed**, so a failing audit
 skips the expensive test matrix and never reaches release promotion:
 
 ```text
-python-build -> { attest-sign -> python-audit | sbom -> grype }
+tag-validate -> python-metadata -> python-build ->
+  { attest-sign -> python-audit | sbom -> grype }
   -> python-tests -> attach-artefacts -> promote-release
 python-build -> cbom
 ```
@@ -86,17 +92,17 @@ complete caller.
 
 [trusted-publishers]: https://docs.pypi.org/trusted-publishers/
 
-The multi-arch variants add a `python-metadata` job and fan the build,
-test and audit jobs across an architecture matrix. Each architecture's
-`sbom` job also runs the Grype scan over the SBOM it generated, in
-place of the single-arch variants' separate `grype` job. The primary build
-leg (the first `runners` entry with the first Python version) honours
-`build_formats` and builds the single sdist; every other leg builds
-wheels and drops any sdist before uploading, which covers `tox_build`
-where the project's tox environment ignores `build_formats`. The
-release variant fails `attach-artefacts` when the merged `dist/` holds
-a duplicated or corrupt sdist, or none when `build_formats` asks for
-one.
+The multi-arch variants fan the build, test and audit jobs across an
+architecture matrix crossed with the Python versions from
+`python-metadata`. Each architecture's `sbom` job also runs the Grype
+scan over the SBOM it generated, in place of the single-arch variants'
+separate `grype` job. The primary build leg (the first `runners` entry
+with the first Python version) honours `build_formats` and builds the
+single sdist; every other leg builds wheels and drops any sdist before
+uploading, which covers `tox_build` where the project's tox environment
+ignores `build_formats`. The release variant fails `attach-artefacts`
+when the merged `dist/` holds a duplicated or corrupt sdist, or none
+when `build_formats` asks for one.
 
 ### CBOM (informational)
 

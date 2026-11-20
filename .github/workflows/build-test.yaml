@@ -9,7 +9,12 @@
 # supplies the grype job's dependencies-changed verdict.
 # After python-build the jobs in { } run in parallel; none gates
 # another, so a PR surfaces every failure (-> denotes sequence):
-#   python-build -> { tests | audit | sbom -> grype | cbom }
+#   python-metadata -> python-build ->
+#   { tests | audit | sbom -> grype | cbom }
+#
+# python-metadata resolves the Python versions the project supports:
+# the tests and audit jobs run one leg per version, and the build and
+# SBOM use the newest.
 #
 # The cbom leg is informational and cannot fail the run; see the job
 # for why that is pinned rather than configurable.
@@ -681,14 +686,107 @@ jobs:
           dependency_patterns: ${{ inputs.grype_dependency_patterns }}
           dependency_path_prefix: ${{ inputs.path_prefix }}
 
+  python-metadata:
+    name: 'Extract Project Metadata'
+    needs: gerrit-validate
+    runs-on: ubuntu-latest
+    outputs:
+      # The {"python-version": [...]} matrix object the tests and audit
+      # jobs expand.
+      matrix_json: ${{ steps.metadata.outputs.python_matrix_json }}
+      # Single version for the build and the SBOM: the latest the
+      # project supports.
+      # yamllint disable-line rule:line-length
+      build_version: ${{ steps.metadata.outputs.python_build_version }}
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: 'Load egress allow-list'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
+        with:
+          config: ${{ inputs.harden_runner_allowlist }}
+          # yamllint disable-line rule:line-length
+          supplemental_config: ${{ inputs.harden_runner_supplemental_allowlist }}
+          # A caller naming a list depends on it, so its absence fails
+          # here rather than at the first blocked connection.
+          # yamllint disable-line rule:line-length
+          supplemental_required: ${{ inputs.harden_runner_supplemental_allowlist != '' && 'true' || 'false' }}
+          # yamllint disable-line rule:line-length
+          supplemental_unpinned: ${{ inputs.harden_runner_supplemental_unpinned && 'true' || 'false' }}
+          extra_endpoints: ${{ inputs.harden_runner_extra_endpoints }}
+          allow_list_summary: 'false'
+      - name: 'Harden runner'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          # yamllint disable-line rule:line-length
+          egress-policy: ${{ inputs.harden_runner_egress == 'audit' && 'audit' || 'block' }}
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: 'Checkout Gerrit change'
+        if: inputs.gerrit_refspec != ''
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/checkout-gerrit-change-action@8721c15dacdd703064df5ade1416f7e5590b65f3  # v1.4.1
+        with:
+          gerrit-refspec: ${{ inputs.gerrit_refspec }}
+          gerrit-project: ${{ inputs.gerrit_project }}
+          # yamllint disable-line rule:line-length
+          gerrit-url: ${{ inputs.gerrit_url != '' && inputs.gerrit_url || vars.GERRIT_URL }}
+          delay: '0s'
+          repository: ${{ inputs.repository || github.repository }}
+          ref: refs/heads/${{ inputs.gerrit_branch }}
+      - name: 'Checkout repository'
+        if: inputs.gerrit_refspec == ''
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: 'Extract Python project metadata'
+        id: metadata
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/build-metadata-action@689e13653176908922b12f85cb93b061c467ba6f  # v0.13.2
+        with:
+          path_prefix: ${{ inputs.path_prefix }}
+          output_format: summary
+          include_environment: true
+          use_version_extract: true
+          verbose: true
+
+      # Every job below expands this matrix, so a malformed one fails
+      # here rather than as an expression error in each of them.
+      - name: 'Check Python version matrix'
+        shell: bash
+        env:
+          MATRIX_JSON: ${{ steps.metadata.outputs.python_matrix_json }}
+          # yamllint disable-line rule:line-length
+          REQUIRES_PYTHON_FALLBACK: ${{ steps.metadata.outputs.python_requires_python_fallback }}
+        run: |
+          # Check the Python version matrix
+          set -euo pipefail
+          if ! printf '%s' "${MATRIX_JSON}" | jq -e \
+              '."python-version" | type == "array" and length > 0' \
+              > /dev/null 2>&1; then
+            echo "::error::No usable Python version matrix: '${MATRIX_JSON}'"
+            exit 1
+          fi
+          echo "Python versions: $(printf '%s' "${MATRIX_JSON}" | \
+            jq -c '."python-version"')"
+          if [ "${REQUIRES_PYTHON_FALLBACK}" = 'true' ]; then
+            echo "::warning::No usable requires-python in the project" \
+              "metadata; the Python versions are a fallback range"
+          fi
+
   python-build:
     name: 'Python Build'
-    needs: gerrit-validate
+    needs: 'python-metadata'
     runs-on: 'ubuntu-latest'
     outputs:
-      matrix_json: ${{ steps.python-build.outputs.matrix_json }}
-      # yamllint disable-line rule:line-length
-      build_python_version: ${{ steps.python-build.outputs.build_python_version }}
       artefact_name: ${{ steps.python-build.outputs.artefact_name }}
       artefact_path: ${{ steps.python-build.outputs.artefact_path }}
     permissions:
@@ -756,18 +854,20 @@ jobs:
         uses: lfreleng-actions/python-build-action@3a996fe53edf0117e283b9fef8d3aacaa9adaf02  # v2.1.2
         with:
           path_prefix: ${{ inputs.path_prefix }}
+          # The newest version in the matrix python-metadata resolved
+          python_version: ${{ needs.python-metadata.outputs.build_version }}
           build_formats: ${{ inputs.build_formats || 'both' }}
           tox_build: ${{ inputs.tox_build }}
 
   python-tests:
     name: 'Python Tests'
     runs-on: 'ubuntu-latest'
-    needs: 'python-build'
+    needs: ['python-metadata', 'python-build']
     # yamllint disable-line rule:line-length
     if: ${{ !cancelled() && needs.python-build.result == 'success' && inputs.tests_enabled }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.python-build.outputs.matrix_json) }}
+      matrix: ${{ fromJson(needs.python-metadata.outputs.matrix_json) }}
     permissions:
       contents: read
     timeout-minutes: ${{ inputs.test_timeout_minutes }}
@@ -843,12 +943,12 @@ jobs:
   python-audit:
     name: 'Python Audit'
     runs-on: 'ubuntu-latest'
-    needs: 'python-build'
+    needs: ['python-metadata', 'python-build']
     # yamllint disable-line rule:line-length
     if: ${{ !cancelled() && needs.python-build.result == 'success' && inputs.audit_enabled }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.python-build.outputs.matrix_json) }}
+      matrix: ${{ fromJson(needs.python-metadata.outputs.matrix_json) }}
     permissions:
       contents: read
     timeout-minutes: ${{ inputs.audit_timeout_minutes }}
@@ -912,7 +1012,7 @@ jobs:
   sbom:
     name: 'Generate SBOM'
     runs-on: ubuntu-latest
-    needs: 'python-build'
+    needs: ['python-metadata', 'python-build']
     # yamllint disable-line rule:line-length
     if: ${{ !cancelled() && needs.python-build.result == 'success' && inputs.sbom_enabled }}
     timeout-minutes: ${{ inputs.audit_timeout_minutes }}
@@ -984,7 +1084,7 @@ jobs:
           # backend binds uv to python_version, so its 3.12 default
           # would fail projects requiring a newer Python
           # yamllint disable-line rule:line-length
-          python_version: ${{ needs.python-build.outputs.build_python_version }}
+          python_version: ${{ needs.python-metadata.outputs.build_version }}
           path_prefix: ${{ inputs.path_prefix }}
           include_dev: ${{ inputs.sbom_include_dev }}
           # The Grype audit below scans the JSON SBOM, so JSON must
