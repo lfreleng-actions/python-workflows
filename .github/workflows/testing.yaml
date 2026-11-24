@@ -9,6 +9,7 @@
 #   * lftools-uv    (standard single-arch) -> build-test.yaml
 #   * python-nss-ng (multi-arch C build)   -> build-test-multiarch.yaml
 #   * tests/fixtures/grype-gate (fixture)  -> build-test.yaml
+#   * tests/fixtures/mixed-markers (fixture) -> build-test.yaml
 #
 # The reusable workflows are referenced with the self-repository form
 # ('$/'), which resolves this repository at the commit already
@@ -125,6 +126,23 @@ jobs:
       grype_gate_when: 'dependencies-changed'
       grype_dependency_ecosystems: 'docker'
 
+  # A whole-workflow build of a Python project beside a package.json.
+  # The build, audit and metadata jobs must all resolve the same project.
+  mixed-markers:
+    name: 'Fixture (mixed-markers)'
+    permissions:
+      contents: read
+      pull-requests: read  # Reusable workflow reads PR metadata
+    uses: $/.github/workflows/build-test.yaml
+    with:
+      path_prefix: 'tests/fixtures/mixed-markers'
+      artifact_suffix: '-mixed-markers-fixture'
+      tests_enabled: false
+      audit_enabled: true
+      sbom_enabled: false
+      grype_enabled: false
+      cbom_enabled: false
+
   # The dependencies-changed gate trusts the verdict the
   # repository-metadata job computes and hands grype-scan-action as
   # dependencies-changed. The action's own suite proves the verdict;
@@ -208,9 +226,9 @@ jobs:
   # beside a higher-ranked marker file (here a package.json) still
   # reads as itself. This job runs their metadata step on such a
   # fixture; tests/test-python-metadata.sh holds the step to the
-  # workflows' pin and with: block, bar path_prefix. A whole-workflow
-  # leg on the fixture waits for python-build-action, which makes the
-  # same call inside itself.
+  # workflows' pin and with: block, bar path_prefix. The
+  # mixed-markers fixture leg below runs the whole workflow and proves
+  # python-build-action makes the same declared-type call.
   python-metadata-fixture:
     name: 'Test: Declared Python project type'
     runs-on: ubuntu-latest
@@ -275,6 +293,84 @@ jobs:
           fi
           echo "Declared Python project type honoured ✅" \
             >> "$GITHUB_STEP_SUMMARY"
+
+  mixed-markers-assert:
+    name: 'Test: Mixed markers build artefact name'
+    runs-on: ubuntu-latest
+    needs: ['mixed-markers']
+    if: ${{ !cancelled() }}
+    permissions:
+      actions: read  # List this run's artefacts
+    timeout-minutes: 10
+    steps:
+      - name: 'Load egress allow-list'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
+      - name: 'Harden runner'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: 'Define gh_api retry helper'
+        shell: bash
+        run: |
+          # Define gh_api retry helper
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/gh-api.sh" << 'EOF'
+          gh_api() {
+            local attempt delay out
+            for attempt in 1 2 3; do
+              if out="$(gh api "$@")"; then
+                printf '%s\n' "${out}"
+                return 0
+              fi
+              if [ "${attempt}" -eq 3 ]; then
+                return 1
+              fi
+              delay="$((attempt * 5))"
+              echo "::warning::gh api failed, attempt ${attempt} of 3;" \
+                "retrying in ${delay}s" >&2
+              sleep "${delay}"
+            done
+          }
+          EOF
+
+      - name: 'Assert the build artefact name'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          LEG_RESULT: ${{ needs.mixed-markers.result }}
+        run: |
+          # Assert the build artefact name
+          set -euo pipefail
+          status=0
+          if [ "${LEG_RESULT}" != 'success' ]; then
+            echo "::error::Mixed-markers leg ${LEG_RESULT}, expected success"
+            status=1
+          fi
+          # shellcheck source=/dev/null
+          . "${RUNNER_TEMP}/gh-api.sh"
+          api="repos/${REPOSITORY}/actions/runs/${RUN_ID}"
+          names="$(gh_api --paginate "${api}/artifacts" \
+            --jq '.artifacts[].name')"
+          if ! grep -Fxq 'mixed-markers-fixture' <<< "${names}"; then
+            echo "::error::No artifact named mixed-markers-fixture"
+            status=1
+          fi
+          if grep -Fxq 'mixed-markers-node-side' <<< "${names}"; then
+            echo "::error::Unexpected artifact named mixed-markers-node-side"
+            status=1
+          fi
+          if [ "${status}" -eq 0 ]; then
+            echo "Mixed-markers build artefact name is correct ✅" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "${status}"
 
   # Proves the gate verdicts from the run itself, not just that the job
   # graph went green. Each consumer dependencies-changed leg builds
