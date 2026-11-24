@@ -204,6 +204,78 @@ jobs:
           fi
           echo "Python version source correct ✅" >> "$GITHUB_STEP_SUMMARY"
 
+  # The workflows declare project_type: python, so a Python project
+  # beside a higher-ranked marker file (here a package.json) still
+  # reads as itself. This job runs their metadata step on such a
+  # fixture; tests/test-python-metadata.sh holds the step to the
+  # workflows' pin and with: block, bar path_prefix. A whole-workflow
+  # leg on the fixture waits for python-build-action, which makes the
+  # same call inside itself.
+  python-metadata-fixture:
+    name: 'Test: Declared Python project type'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: 'Load egress allow-list'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
+      - name: 'Harden runner'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 'Extract Python project metadata'
+        id: metadata
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/build-metadata-action@689e13653176908922b12f85cb93b061c467ba6f  # v0.13.2
+        with:
+          path_prefix: 'tests/fixtures/mixed-markers'
+          project_type: python
+          output_format: summary
+          include_environment: true
+          use_version_extract: true
+          verbose: true
+
+      - name: 'Assert the fixture reads as its Python project'
+        shell: bash
+        env:
+          MATRIX_JSON: ${{ steps.metadata.outputs.python_matrix_json }}
+          PROJECT_NAME: ${{ steps.metadata.outputs.project_name }}
+          EXPECTED_NAME: 'mixed-markers-fixture'
+        run: |
+          # Assert the fixture reads as its Python project
+          set -euo pipefail
+          status=0
+          if ! printf '%s' "${MATRIX_JSON}" | jq -e \
+              '."python-version" | type == "array" and length > 0' \
+              > /dev/null 2>&1; then
+            echo "::error::No usable Python version matrix: '${MATRIX_JSON}'"
+            status=1
+          fi
+          if [ "${PROJECT_NAME}" != "${EXPECTED_NAME}" ]; then
+            echo "::error::project_name is '${PROJECT_NAME}'," \
+              "expected '${EXPECTED_NAME}'"
+            status=1
+          fi
+          if [ "${status}" -ne 0 ]; then
+            echo "Declared Python project type ignored ❌" \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Declared Python project type honoured ✅" \
+            >> "$GITHUB_STEP_SUMMARY"
+
   # Proves the gate verdicts from the run itself, not just that the job
   # graph went green. Each consumer dependencies-changed leg builds
   # another repository, which the repository-metadata job cannot

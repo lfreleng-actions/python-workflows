@@ -343,12 +343,13 @@ callers for the publish-job pattern.
 - **SBOM + Grype run per-arch** (native dependency trees differ per arch).
 - The standard variants share this structure: their `python-metadata`
   job calls the same pinned `build-metadata-action` with the same
-  inputs, and supplies the tests and audit matrix and the build and
-  SBOM interpreter. No job reads them from `python-build`, whose
-  embedded copy of `build-metadata-action` can resolve a different
-  range, so the standard and multi-arch variants always agree on the
-  Python versions a project supports. `tests/test-python-metadata.sh`
-  holds all four workflows to this.
+  inputs, `project_type: python` among them, and supplies the tests
+  and audit matrix and the build and SBOM interpreter. No job reads
+  them from `python-build`, whose embedded copy of
+  `build-metadata-action` can resolve a different range, so the
+  standard and multi-arch variants always agree on the Python versions
+  a project supports. `tests/test-python-metadata.sh` holds all four
+  workflows to this.
 - **Downstream gating differs by intent.** Because `python-build` is a
   matrix (arch × version), gating tests/audit on its aggregate result
   would skip the whole downstream matrix when any one cell fails. The

@@ -20,6 +20,11 @@
 # the check must catch and expects each mutant to fail, so a check that
 # silently passes everything fails here too.
 #
+# testing.yaml runs the same step on tests/fixtures/mixed-markers, a
+# Python project beside a package.json. The script holds that step to
+# the workflows' pin, version comment and with: block, bar
+# path_prefix, so the copy cannot drift, and mutates it the same way.
+#
 # Usage: bash tests/test-python-metadata.sh [<workflows-dir>]
 #
 # Needs python3 with PyYAML.
@@ -63,6 +68,7 @@ JOB = "python-metadata"
 STEP_ID = "metadata"
 METADATA_WITH = {
     "path_prefix": OPEN + "inputs.path_prefix" + CLOSE,
+    "project_type": "python",
     "output_format": "summary",
     "include_environment": True,
     "use_version_extract": True,
@@ -96,6 +102,9 @@ WORKFLOWS = {
         OPEN + f"fromJson(needs.{JOB}.outputs.versions_json)" + CLOSE),
 }
 STANDARD = ("build-test.yaml", "build-test-release.yaml")
+TESTING = "testing.yaml"
+FIXTURE_WITH = {**METADATA_WITH,
+                "path_prefix": "tests/fixtures/mixed-markers"}
 
 
 def needs_of(job):
@@ -246,6 +255,57 @@ def check(name, text, doc):
     return problems
 
 
+def check_testing(text, doc):
+    """Return the problems in testing.yaml's copy of the step."""
+    problems = []
+    check_text(text, problems)
+    steps = [s for job in (doc.get("jobs") or {}).values()
+             for s in steps_using(job, METADATA)]
+    if len(steps) != 1:
+        problems.append(f"{len(steps)} {METADATA} steps, expected 1")
+        return problems
+    step = steps[0]
+    if step.get("uses") != f"{METADATA}@{METADATA_PIN}":
+        problems.append(f"{METADATA} step pins {step.get('uses')!r}, "
+                        f"expected {METADATA}@{METADATA_PIN}")
+    if step.get("with") != FIXTURE_WITH:
+        problems.append(f"{METADATA} step with: is {step.get('with')!r}, "
+                        f"expected {FIXTURE_WITH!r}")
+    return problems
+
+
+def testing_mutants(text, doc):
+    """Yield (label, mutated text, mutated doc) for testing.yaml."""
+    def step(d):
+        return [s for job in d["jobs"].values()
+                for s in steps_using(job, METADATA)][0]
+
+    def doc_only(label, mutate):
+        d = copy.deepcopy(doc)
+        mutate(d)
+        return label, text, d
+
+    yield ("version comment changed",
+           text.replace(f"@{METADATA_PIN}  # {METADATA_TAG}",
+                        f"@{METADATA_PIN}  # v0.11.1"), doc)
+
+    def wrong_pin(d):
+        step(d)["uses"] = f"{METADATA}@{'0' * 40}"
+    yield doc_only("pin changed", wrong_pin)
+
+    def drop_project_type(d):
+        del step(d)["with"]["project_type"]
+    yield doc_only("with: project_type dropped", drop_project_type)
+
+    def change_input(d):
+        step(d)["with"]["verbose"] = False
+    yield doc_only("with: input changed", change_input)
+
+    def add_input(d):
+        step(d)["with"]["python_version"] = "3.12"
+    yield doc_only("with: input added", add_input)
+
+
 def metadata_step(doc):
     return steps_using(doc["jobs"][JOB], METADATA)[0]
 
@@ -298,6 +358,10 @@ def mutants(name, text, doc):
     def drop_input(d):
         del metadata_step(d)["with"]["use_version_extract"]
     yield doc_only("with: input dropped", drop_input)
+
+    def drop_project_type(d):
+        del metadata_step(d)["with"]["project_type"]
+    yield doc_only("with: project_type dropped", drop_project_type)
 
     def change_input(d):
         metadata_step(d)["with"]["path_prefix"] = "."
@@ -415,6 +479,28 @@ for name, (text, doc) in loaded.items():
             print(f"::error::mutant of {name} not caught: {label}")
     print(f"Mutants of {name} caught: {caught}/{total}")
     failures += total - caught
+
+testing_path = root / TESTING
+if not testing_path.is_file():
+    print(f"::error::{testing_path} is missing")
+    failures += 1
+else:
+    text = testing_path.read_text(encoding="utf-8")
+    doc = yaml.safe_load(text)
+    problems = check_testing(text, doc)
+    for problem in problems:
+        print(f"::error file=.github/workflows/{TESTING}::{problem}")
+    failures += len(problems)
+    if not problems:
+        caught = total = 0
+        for label, mutant_text, mutant_doc in testing_mutants(text, doc):
+            total += 1
+            if check_testing(mutant_text, mutant_doc):
+                caught += 1
+            else:
+                print(f"::error::mutant of {TESTING} not caught: {label}")
+        print(f"Mutants of {TESTING} caught: {caught}/{total}")
+        failures += total - caught
 
 if failures:
     print(f"{failures} problem(s) in the Python metadata contract ❌")

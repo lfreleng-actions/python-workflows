@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# A Python project beside a package.json that names another project.
+# build-metadata-action's type detection ranks package.json above
+# pyproject.toml, so only a declared project_type reads this
+# directory as this project. The python-metadata-fixture job of
+# testing.yaml checks that it does.
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mixed-markers-fixture"
+version = "0.0.1"
+description = "Fixture for the declared Python project type"
+requires-python = ">=3.11"
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]

@@ -33,7 +33,9 @@ informational step that does not gate the build). A `python-metadata`
 job runs first and resolves the Python versions the project supports
 from its `requires-python`, through one pinned `build-metadata-action`
 shared by all four workflows: the test and audit jobs run one leg per
-version, and the build and SBOM use the newest. After `python-build`,
+version, and the build and SBOM use the newest. That job declares the
+project type as Python, so another tool's marker file beside the
+project (a `package.json`, say) cannot hide it. After `python-build`,
 the test, audit and SBOM/Grype branches run in parallel - none gates
 another, so a pull request surfaces every failure at once (jobs in
 `{ }` run concurrently; `->` denotes sequence):
