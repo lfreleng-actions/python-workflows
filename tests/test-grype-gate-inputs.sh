@@ -11,8 +11,9 @@
 # a job output and hand it to the grype-scan-action call, guarded so
 # that a failed or skipped metadata job leaves it empty, which gates.
 # They expose grype_gate_when and the detection inputs. The release
-# workflows take the same policy inputs, pin the same metadata
+# workflows take the same policy inputs, call the same metadata
 # action, pass gate-when 'always' and never detect. Every workflow
+# pins the metadata action to one shared commit SHA. Every workflow
 # validates the Grype inputs in gerrit-validate by calling
 # grype-scan-action in validate-only mode with the scan step's own
 # with: block, so a typo fails in seconds rather than after the build;
@@ -21,16 +22,16 @@
 #
 # repository-metadata-action's own suite proves what it detects, and
 # grype-scan-action's proves what validate-only rejects; this script
-# proves the wiring around them: the pin and the detection inputs, the
-# checkout depth detection needs, the job output and its guarded
-# hand-off, that the retired sbom-job detection and its sidecar are
-# gone, that every policy input exists with the agreed default and
-# reaches the scan, and the validate-only contract: one validator
-# step, at the scan's pin, with validate-only 'true' and, for every
-# input the scan step passes, the identical expression. It then
-# mutates a copy of each verify workflow in each way the check must
-# catch and expects each mutant to fail, so a check that silently
-# passes everything fails here too.
+# proves the wiring around them: the shared pin and the detection
+# inputs, the checkout depth detection needs, the job output and its
+# guarded hand-off, that the retired sbom-job detection and its
+# sidecar are gone, that every policy input exists with the agreed
+# default and reaches the scan, and the validate-only contract: one
+# validator step, at the scan's pin, with validate-only 'true' and,
+# for every input the scan step passes, the identical expression. It
+# then mutates a copy of each verify workflow in each way the check
+# must catch and expects each mutant to fail, so a check that
+# silently passes everything fails here too.
 #
 # Usage: bash tests/test-grype-gate-inputs.sh [<workflows-dir>]
 #
@@ -67,7 +68,8 @@ import sys
 import yaml
 
 METADATA = "lfreleng-actions/repository-metadata-action"
-METADATA_PIN = "f4417bda9e73aa169709682d07d6083453275c58"  # v0.5.5
+# A full commit SHA; a tag or a short SHA can move or collide
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
 GRYPE = "lfreleng-actions/grype-scan-action"
 GRYPE_PIN = "f65dca2762823cfc8f376e32fee9baa6f3292696"  # v0.6.2
 # The detection wiring this replaced: none of it may come back
@@ -252,6 +254,26 @@ def check_consumer(doc, problems):
                         "failure skips the scan")
 
 
+def metadata_pin(doc):
+    """Return the ref the metadata step pins, or None without one."""
+    job = (doc.get("jobs") or {}).get(METADATA_JOB) or {}
+    meta = step(job.get("steps") or [], "id", METADATA_STEP)
+    if meta is None or uses_name(meta) != METADATA:
+        return None
+    return str(meta.get("uses", "")).partition("@")[2]
+
+
+def check_shared_pin(pins):
+    """Return (name, problem) for each workflow when the metadata
+    calls in pins, workflow name -> ref, pin more than one ref."""
+    distinct = set(pins.values())
+    if len(distinct) < 2:
+        return []
+    return [(name, f"jobs.{METADATA_JOB} pins {METADATA}@{pin!r}; the "
+             f"workflows pin {len(distinct)} different refs, expected one")
+            for name, pin in pins.items()]
+
+
 def check_metadata(name, doc, problems):
     """Every workflow pins the metadata action; verify lanes detect."""
     job = (doc.get("jobs") or {}).get(METADATA_JOB)
@@ -264,9 +286,10 @@ def check_metadata(name, doc, problems):
         problems.append(f"jobs.{METADATA_JOB} has no {METADATA_STEP} step "
                         f"using {METADATA}")
         return
-    if str(meta.get("uses", "")).partition("@")[2] != METADATA_PIN:
-        problems.append(f"jobs.{METADATA_JOB} does not pin "
-                        f"{METADATA}@{METADATA_PIN}")
+    pin = metadata_pin(doc)
+    if not FULL_SHA.fullmatch(pin):
+        problems.append(f"jobs.{METADATA_JOB} pins {METADATA}@{pin!r}, "
+                        "expected a full commit SHA")
     given = meta.get("with") or {}
     output = (job.get("outputs") or {}).get(VERDICT)
     if name in RELEASE:
@@ -482,8 +505,11 @@ def mutants(doc):
     scan(d)["uses"] = f"{GRYPE}@{'0' * 40}"
     yield "grype-scan-action pinned elsewhere", d
     d = copy.deepcopy(doc)
-    meta(d)["uses"] = f"{METADATA}@2206d754f65f1a90f57b49be546712c5f594def2"
-    yield "repository-metadata-action on v0.3.3", d
+    meta(d)["uses"] = f"{METADATA}@v0.5.5"
+    yield "repository-metadata-action pinned to a tag", d
+    d = copy.deepcopy(doc)
+    meta(d)["uses"] = f"{METADATA}@{metadata_pin(doc)[:7]}"
+    yield "repository-metadata-action pinned to a short SHA", d
     for key in METADATA_WITH:
         d = copy.deepcopy(doc)
         del meta(d)["with"][key]
@@ -618,18 +644,26 @@ def mutants(doc):
 root = pathlib.Path(sys.argv[1])
 out = pathlib.Path(sys.argv[2])
 failures = 0
+# Workflows with at least one problem, for the summary
+failed = set()
 reference = None
+pins = {}
 for name in VERIFY + RELEASE:
     if not (root / name).is_file():
         print(f"::error::{root / name} is missing")
         failures += 1
+        failed.add(name)
         continue
     doc = load(root, name)
     problems = check_doc(name, doc, reference)
+    pin = metadata_pin(doc)
+    if pin is not None:
+        pins[name] = pin
     if name == VERIFY[0]:
         found = check_validation(name, doc, None, [])
         if None in found.values():
             failures += 1
+            failed.add(name)
             print(f"::error file={root / name}::cannot extract the "
                   "validation steps")
         else:
@@ -638,10 +672,14 @@ for name in VERIFY + RELEASE:
                 (out / f"{step_id}.sh").write_text(reference[key]["run"])
     for problem in problems:
         failures += 1
+        failed.add(name)
         print(f"::error file={root / name}::{problem}")
+for name, problem in check_shared_pin(pins):
+    failures += 1
+    failed.add(name)
+    print(f"::error file={root / name}::{problem}")
 if failures:
-    print(f"{failures} problem(s) across {len(VERIFY + RELEASE)} "
-          "workflow(s) ❌")
+    print(f"{failures} problem(s) across {len(failed)} workflow(s) ❌")
     sys.exit(1)
 print(f"{len(VERIFY + RELEASE)} workflow(s) wire the Grype gate ✅")
 
@@ -662,6 +700,22 @@ for name in VERIFY:
             caught += 1
         else:
             print(f"::error::mutant of {name} not caught: {label}")
+    # A lone workflow cannot drift from itself: re-pin a copy to
+    # another valid SHA, one that differs from the clean pin, and check
+    # the pair
+    total += 1
+    other = "2206d754f65f1a90f57b49be546712c5f594def2"  # v0.3.3
+    if metadata_pin(doc) == other:
+        other = "0" * 40
+    mutant = copy.deepcopy(doc)
+    step(mutant["jobs"][METADATA_JOB]["steps"], "id", METADATA_STEP)[
+        "uses"] = f"{METADATA}@{other}"
+    if check_shared_pin({name: metadata_pin(doc),
+                         f"{name} (re-pinned)": metadata_pin(mutant)}):
+        caught += 1
+    else:
+        print(f"::error::mutant of {name} not caught: "
+              f"repository-metadata-action on {other} beside the clean one")
     print(f"Mutants of {name} caught: {caught}/{total}")
     escaped += total - caught
 if escaped:
