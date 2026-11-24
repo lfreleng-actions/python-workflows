@@ -63,6 +63,7 @@ JOB = "python-metadata"
 STEP_ID = "metadata"
 METADATA_WITH = {
     "path_prefix": OPEN + "inputs.path_prefix" + CLOSE,
+    "project_type": "python",
     "output_format": "summary",
     "include_environment": True,
     "use_version_extract": True,
@@ -298,6 +299,10 @@ def mutants(name, text, doc):
     def drop_input(d):
         del metadata_step(d)["with"]["use_version_extract"]
     yield doc_only("with: input dropped", drop_input)
+
+    def drop_project_type(d):
+        del metadata_step(d)["with"]["project_type"]
+    yield doc_only("with: project_type dropped", drop_project_type)
 
     def change_input(d):
         metadata_step(d)["with"]["path_prefix"] = "."
