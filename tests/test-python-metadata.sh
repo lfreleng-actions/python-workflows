@@ -46,17 +46,23 @@ if ! python3 -c 'import yaml' 2>/dev/null; then
 fi
 
 # '-I' keeps the working directory off sys.path.
-python3 -I - "${workflows}" <<'PYEOF'
+python3 -IB - "${workflows}" "${script_dir}" <<'PYEOF'
 import copy
 import pathlib
 import re
 import sys
+from functools import partial
 
 import yaml
 
+sys.path.insert(0, sys.argv[2])
+from action_pins import check_pins, pin_self_tests
+
+compose = partial(yaml.compose, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
 METADATA = "lfreleng-actions/build-metadata-action"
-METADATA_PIN = "689e13653176908922b12f85cb93b061c467ba6f"
-METADATA_TAG = "v0.13.2"
+# This release resolves the Python matrix from live release data.
+METADATA_FLOOR = (0, 13, 2)
 BUILD = "lfreleng-actions/python-build-action"
 SBOM = "lfreleng-actions/sbom-action"
 # Split so a workflow running this script leaves the expressions
@@ -136,19 +142,6 @@ def env_reads(step, expression):
     return expression in (step.get("env") or {}).values()
 
 
-def check_text(text, problems):
-    """The pin's version comment lives only in the raw text."""
-    lines = [line.strip() for line in text.splitlines()
-             if re.match(r"\s*(-\s+)?uses:\s*" + re.escape(METADATA) + "@",
-                         line)]
-    expected = f"uses: {METADATA}@{METADATA_PIN}  # {METADATA_TAG}"
-    if len(lines) != 1:
-        problems.append(f"{len(lines)} {METADATA} lines, expected 1")
-    elif lines[0].removeprefix("- ") != expected:
-        problems.append(f"{METADATA} line is {lines[0]!r}, "
-                        f"expected {expected!r}")
-
-
 def check_metadata_job(name, doc, problems):
     needed, matrix_output, _ = WORKFLOWS[name]
     jobs = doc.get("jobs") or {}
@@ -170,9 +163,6 @@ def check_metadata_job(name, doc, problems):
                         "expected 1")
         return
     step = steps[0]
-    if step.get("uses") != f"{METADATA}@{METADATA_PIN}":
-        problems.append(f"{where} pins {step.get('uses')!r}, expected "
-                        f"{METADATA}@{METADATA_PIN}")
     if step.get("id") != STEP_ID:
         problems.append(f"{where} metadata step id is {step.get('id')!r}, "
                         f"expected {STEP_ID!r}")
@@ -246,36 +236,31 @@ def check_consumers(name, doc, problems):
         problems.append(f"no job calls {BUILD}")
 
 
-def check(name, text, doc):
+def check(name, doc):
     """Return the list of problems in one workflow."""
     problems = []
-    check_text(text, problems)
     check_metadata_job(name, doc, problems)
     check_consumers(name, doc, problems)
     return problems
 
 
-def check_testing(text, doc):
+def check_testing(doc):
     """Return the problems in testing.yaml's copy of the step."""
     problems = []
-    check_text(text, problems)
     steps = [s for job in (doc.get("jobs") or {}).values()
              for s in steps_using(job, METADATA)]
     if len(steps) != 1:
         problems.append(f"{len(steps)} {METADATA} steps, expected 1")
         return problems
     step = steps[0]
-    if step.get("uses") != f"{METADATA}@{METADATA_PIN}":
-        problems.append(f"{METADATA} step pins {step.get('uses')!r}, "
-                        f"expected {METADATA}@{METADATA_PIN}")
     if step.get("with") != FIXTURE_WITH:
         problems.append(f"{METADATA} step with: is {step.get('with')!r}, "
                         f"expected {FIXTURE_WITH!r}")
     return problems
 
 
-def testing_mutants(text, doc):
-    """Yield (label, mutated text, mutated doc) for testing.yaml."""
+def testing_mutants(doc):
+    """Yield (label, mutated doc) for testing.yaml."""
     def step(d):
         return [s for job in d["jobs"].values()
                 for s in steps_using(job, METADATA)][0]
@@ -283,15 +268,7 @@ def testing_mutants(text, doc):
     def doc_only(label, mutate):
         d = copy.deepcopy(doc)
         mutate(d)
-        return label, text, d
-
-    yield ("version comment changed",
-           text.replace(f"@{METADATA_PIN}  # {METADATA_TAG}",
-                        f"@{METADATA_PIN}  # v0.11.1"), doc)
-
-    def wrong_pin(d):
-        step(d)["uses"] = f"{METADATA}@{'0' * 40}"
-    yield doc_only("pin changed", wrong_pin)
+        return label, d
 
     def drop_project_type(d):
         del step(d)["with"]["project_type"]
@@ -322,14 +299,14 @@ def sbom_step(doc):
     return steps_using(doc["jobs"]["sbom"], SBOM)[0]
 
 
-def mutants(name, text, doc):
-    """Yield (label, mutated text, mutated doc) for one workflow."""
+def mutants(name, doc):
+    """Yield (label, mutated doc) for one workflow."""
     _, matrix_output, _ = WORKFLOWS[name]
 
     def doc_only(label, mutate):
         d = copy.deepcopy(doc)
         mutate(d)
-        return label, text, d
+        return label, d
 
     def drop_job(d):
         del d["jobs"][JOB]
@@ -342,14 +319,6 @@ def mutants(name, text, doc):
     def wrong_needs(d):
         d["jobs"][JOB]["needs"] = "repository-metadata"
     yield doc_only("python-metadata needs another job", wrong_needs)
-
-    yield ("version comment changed",
-           text.replace(f"@{METADATA_PIN}  # {METADATA_TAG}",
-                        f"@{METADATA_PIN}  # v0.11.1"), doc)
-
-    def wrong_pin(d):
-        metadata_step(d)["uses"] = f"{METADATA}@{'0' * 40}"
-    yield doc_only("pin changed", wrong_pin)
 
     def rename_step(d):
         metadata_step(d)["id"] = "meta"
@@ -453,27 +422,28 @@ def mutants(name, text, doc):
 root = pathlib.Path(sys.argv[1])
 failures = 0
 loaded = {}
+sources = {}
 for name in WORKFLOWS:
     path = root / name
     if not path.is_file():
         print(f"::error::{path} is missing")
         failures += 1
         continue
-    text = path.read_text(encoding="utf-8")
-    doc = yaml.safe_load(text)
-    loaded[name] = (text, doc)
-    problems = check(name, text, doc)
+    sources[name] = path.read_text(encoding="utf-8")
+    doc = yaml.safe_load(sources[name])
+    loaded[name] = doc
+    problems = check(name, doc)
     for problem in problems:
         print(f"::error file=.github/workflows/{name}::{problem}")
     failures += len(problems)
 
-for name, (text, doc) in loaded.items():
-    if check(name, text, doc):
+for name, doc in loaded.items():
+    if check(name, doc):
         continue
     caught = total = 0
-    for label, mutant_text, mutant_doc in mutants(name, text, doc):
+    for label, mutant_doc in mutants(name, doc):
         total += 1
-        if check(name, mutant_text, mutant_doc):
+        if check(name, mutant_doc):
             caught += 1
         else:
             print(f"::error::mutant of {name} not caught: {label}")
@@ -485,23 +455,31 @@ if not testing_path.is_file():
     print(f"::error::{testing_path} is missing")
     failures += 1
 else:
-    text = testing_path.read_text(encoding="utf-8")
-    doc = yaml.safe_load(text)
-    problems = check_testing(text, doc)
+    sources[TESTING] = testing_path.read_text(encoding="utf-8")
+    doc = yaml.safe_load(sources[TESTING])
+    problems = check_testing(doc)
     for problem in problems:
         print(f"::error file=.github/workflows/{TESTING}::{problem}")
     failures += len(problems)
     if not problems:
         caught = total = 0
-        for label, mutant_text, mutant_doc in testing_mutants(text, doc):
+        for label, mutant_doc in testing_mutants(doc):
             total += 1
-            if check_testing(mutant_text, mutant_doc):
+            if check_testing(mutant_doc):
                 caught += 1
             else:
                 print(f"::error::mutant of {TESTING} not caught: {label}")
         print(f"Mutants of {TESTING} caught: {caught}/{total}")
         failures += total - caught
 
+pin_problems = check_pins(sources, METADATA, METADATA_FLOOR, compose)
+if not pin_problems and not failures:
+    pin_problems = pin_self_tests(sources, METADATA, METADATA_FLOOR, compose)
+    if not pin_problems:
+        print(f"{METADATA} pin self-tests passed")
+for problem in pin_problems:
+    print(f"::error::{problem}")
+failures += len(pin_problems)
 if failures:
     print(f"{failures} problem(s) in the Python metadata contract ❌")
     sys.exit(1)
