@@ -22,7 +22,7 @@
 #
 # repository-metadata-action's own suite proves what it detects, and
 # grype-scan-action's proves what validate-only rejects; this script
-# proves the wiring around them: the shared pin and the detection
+# proves the wiring around them: the shared pins and the detection
 # inputs, the checkout depth detection needs, the job output and its
 # guarded hand-off, that the retired sbom-job detection and its
 # sidecar are gone, that every policy input exists with the agreed
@@ -59,19 +59,26 @@ trap 'rm -rf "${scratch}"' EXIT
 # Static checks over the four workflows. Writes the shared detection
 # validation step body to the scratch directory for the second half.
 # '-I' keeps the working directory off sys.path.
-python3 -I - "${workflows}" "${scratch}" <<'PYEOF'
+python3 -IB - "${workflows}" "${scratch}" "${script_dir}" <<'PYEOF'
 import copy
 import pathlib
 import re
 import sys
+from functools import partial
 
 import yaml
+
+sys.path.insert(0, sys.argv[3])
+from action_pins import check_pins, pin_self_tests
+
+compose = partial(yaml.compose, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
 
 METADATA = "lfreleng-actions/repository-metadata-action"
 # A full commit SHA; a tag or a short SHA can move or collide
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 GRYPE = "lfreleng-actions/grype-scan-action"
-GRYPE_PIN = "f65dca2762823cfc8f376e32fee9baa6f3292696"  # v0.6.2
+# The policy wiring relies on the action's validate-only mode.
+GRYPE_FLOOR = (0, 6, 2)
 # The detection wiring this replaced: none of it may come back
 RETIRED = (
     "lfreleng-actions/dependency-change-action",
@@ -196,8 +203,6 @@ def check_scan(name, doc, problems):
         problems.append(f"expected exactly one {GRYPE} step")
         return
     where = f"jobs.{job_id}"
-    if str(scan.get("uses", "")).partition("@")[2] != GRYPE_PIN:
-        problems.append(f"{where} does not pin {GRYPE}@{GRYPE_PIN}")
     if scan.get("id") != "grype-audit":
         problems.append(f"{where} {GRYPE} step id is not grype-audit")
     given = scan.get("with") or {}
@@ -392,8 +397,6 @@ def check_validator(doc, problems):
     if scan is not None and validator.get("uses") != scan.get("uses"):
         problems.append(f"{where} uses {validator.get('uses')!r}, the "
                         f"scan {scan.get('uses')!r}; one pin governs both")
-    if str(validator.get("uses", "")).partition("@")[2] != GRYPE_PIN:
-        problems.append(f"{where} does not pin {GRYPE}@{GRYPE_PIN}")
     given = validator.get("with") or {}
     # The literal string: YAML reads a bare true as a boolean
     if given.get("validate-only") != "true" or not isinstance(
@@ -440,10 +443,6 @@ def check_doc(name, doc, reference=None):
     check_validation(name, doc, reference, problems)
     check_validator(doc, problems)
     return problems
-
-
-def load(root, name):
-    return yaml.safe_load((root / name).read_text(encoding="utf-8"))
 
 
 def mutants(doc):
@@ -501,9 +500,6 @@ def mutants(doc):
     d = copy.deepcopy(doc)
     scan(d)["with"]["dependency-change-manifest"] = "dependency-change.json"
     yield "sidecar manifest read again", d
-    d = copy.deepcopy(doc)
-    scan(d)["uses"] = f"{GRYPE}@{'0' * 40}"
-    yield "grype-scan-action pinned elsewhere", d
     d = copy.deepcopy(doc)
     meta(d)["uses"] = f"{METADATA}@v0.5.5"
     yield "repository-metadata-action pinned to a tag", d
@@ -594,13 +590,6 @@ def mutants(doc):
         copy.deepcopy(validator(d)))
     yield "validator duplicated", d
     d = copy.deepcopy(doc)
-    validator(d)["uses"] = f"{GRYPE}@{'0' * 40}"
-    yield "validator pinned elsewhere", d
-    d = copy.deepcopy(doc)
-    scan(d)["uses"] = f"{GRYPE}@{'0' * 40}"
-    validator(d)["uses"] = f"{GRYPE}@{'0' * 40}"
-    yield "validator and scan pinned elsewhere together", d
-    d = copy.deepcopy(doc)
     del validator(d)["with"]["validate-only"]
     yield "validate-only removed", d
     d = copy.deepcopy(doc)
@@ -648,13 +637,15 @@ failures = 0
 failed = set()
 reference = None
 pins = {}
+sources = {}
 for name in VERIFY + RELEASE:
     if not (root / name).is_file():
         print(f"::error::{root / name} is missing")
         failures += 1
         failed.add(name)
         continue
-    doc = load(root, name)
+    sources[name] = (root / name).read_text(encoding="utf-8")
+    doc = yaml.safe_load(sources[name])
     problems = check_doc(name, doc, reference)
     pin = metadata_pin(doc)
     if pin is not None:
@@ -678,8 +669,12 @@ for name, problem in check_shared_pin(pins):
     failures += 1
     failed.add(name)
     print(f"::error file={root / name}::{problem}")
-if failures:
-    print(f"{failures} problem(s) across {len(failed)} workflow(s) ❌")
+pin_problems = check_pins(sources, GRYPE, GRYPE_FLOOR, compose)
+for problem in pin_problems:
+    print(f"::error::{problem}")
+if failures or pin_problems:
+    print(f"{failures} wiring problem(s) across {len(failed)} workflow(s) "
+          f"and {len(pin_problems)} pin diagnostic(s) ❌")
     sys.exit(1)
 print(f"{len(VERIFY + RELEASE)} workflow(s) wire the Grype gate ✅")
 
@@ -690,7 +685,7 @@ print(f"{len(VERIFY + RELEASE)} workflow(s) wire the Grype gate ✅")
 # divergence.
 escaped = 0
 for name in VERIFY:
-    doc = load(root, name)
+    doc = yaml.safe_load(sources[name])
     caught = total = 0
     for label, mutant in mutants(doc):
         total += 1
@@ -718,8 +713,12 @@ for name in VERIFY:
               f"repository-metadata-action on {other} beside the clean one")
     print(f"Mutants of {name} caught: {caught}/{total}")
     escaped += total - caught
-if escaped:
+pin_mutants = pin_self_tests(sources, GRYPE, GRYPE_FLOOR, compose)
+for problem in pin_mutants:
+    print(f"::error::{problem}")
+if escaped or pin_mutants:
     sys.exit(1)
+print(f"{GRYPE} pin self-tests passed")
 PYEOF
 
 # Drive the extracted detection validation step against the values it
